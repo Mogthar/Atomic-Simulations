@@ -46,7 +46,7 @@ button_startPause.grid(row=0, column=0, sticky=tk.NSEW)
 button_stop.grid(row=0, column=1, sticky=tk.NSEW)
 
 ### slider tab ###
-slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=1, orient="horizontal")
+slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=10, orient="horizontal")
 slider_frameControl.grid(row=2, column=0, sticky=tk.NSEW)
 
 ### open folder tab ###
@@ -58,7 +58,7 @@ frame_fileDialog.columnconfigure([0,1,2], minsize=10, weight=1)
 
 # input box
 entry_fileName =tk.Entry(master=frame_fileDialog)
-entry_fileName.grid(column=0, row=0, sticky=tk.E)
+entry_fileName.grid(column=0, row=0, sticky=tk.EW)
 
 # open button
 button_loadFile = tk.Button(master=frame_fileDialog, text="Load")
