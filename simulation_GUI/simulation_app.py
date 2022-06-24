@@ -4,7 +4,7 @@ from tkinter import filedialog as fd
 window = tk.Tk()
 
 window.rowconfigure(0, minsize=100, weight=1)
-window.columnconfigure(0, minsize=100, weight = 3)
+window.columnconfigure(0, minsize=100, weight = 3) # add padding
 window.columnconfigure(1, minsize=100, weight = 1)
 
 #### set up two main frames which split the screen into animation part and simulation input ###
@@ -22,10 +22,8 @@ for i in range(1,4):
 
 
 ### animation canvas ###
-canvas_animation = tk.Canvas(master=frame_animation, bg="white")
+canvas_animation = tk.Canvas(master=frame_animation, bg="white") ## set a size for the canvas
 canvas_animation.grid(column=0, row=0, sticky=tk.NSEW)
-x_axis = canvas_animation.create_line(0, 100 , 100, 100)
-# draw axes
 
 ### controls tab ###
 frame_animationControls = tk.Frame(master=frame_animation, relief=tk.FLAT, borderwidth=5, bg="green")
@@ -56,12 +54,23 @@ frame_fileDialog.grid(column=0, row=3, sticky=tk.NSEW)
 frame_fileDialog.rowconfigure(0, minsize=10, weight=1)
 frame_fileDialog.columnconfigure([0,1,2], minsize=10, weight=1)
 
+def SetEntryText(entry, text):
+    entry.delete(0, tk.END)
+    entry.insert(0, text)
+    return
+    
 # input box
-entry_fileName =tk.Entry(master=frame_fileDialog)
+entry_fileName = tk.Entry(master=frame_fileDialog)
 entry_fileName.grid(column=0, row=0, sticky=tk.EW)
 
 # open button
-button_loadFile = tk.Button(master=frame_fileDialog, text="Load")
+def LoadTrajectoryFile():
+    filetypes = (('trajectory files', '*.traject'),('xyz file', '*.xyz'))
+    filename = fd.askopenfile(title = 'Load trajectory file', initialdir ='/', filetypes = filetypes) # throw an exception if it fails
+    SetEntryText(entry_fileName, filename)
+    return
+    
+button_loadFile = tk.Button(master=frame_fileDialog, text="Load", command = LoadTrajectoryFile)
 button_loadFile.grid(row=0, column=1, sticky=tk.NSEW)
 
 # text field to confirm file loaded
