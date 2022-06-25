@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog as fd
+import simulation as sim
 
 window = tk.Tk()
 
@@ -44,7 +45,7 @@ button_startPause.grid(row=0, column=0, sticky=tk.NSEW)
 button_stop.grid(row=0, column=1, sticky=tk.NSEW)
 
 ### slider tab ###
-slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=10, orient="horizontal")
+slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=0, orient="horizontal")
 slider_frameControl.grid(row=2, column=0, sticky=tk.NSEW)
 
 ### open folder tab ###
@@ -52,22 +53,21 @@ frame_fileDialog = tk.Frame(master=frame_animation, relief=tk.FLAT, borderwidth=
 frame_fileDialog.grid(column=0, row=3, sticky=tk.NSEW)
 
 frame_fileDialog.rowconfigure(0, minsize=10, weight=1)
-frame_fileDialog.columnconfigure([0,1,2], minsize=10, weight=1)
+frame_fileDialog.columnconfigure([0,1], minsize=10, weight=1)
 
-def SetEntryText(entry, text):
-    entry.delete(0, tk.END)
-    entry.insert(0, text)
+def SetLabelText(label, text):
+    label['text'] = text
     return
-    
-# input box
-entry_fileName = tk.Entry(master=frame_fileDialog)
-entry_fileName.grid(column=0, row=0, sticky=tk.EW)
 
-# open button
+# load file buutton
 def LoadTrajectoryFile():
     filetypes = (('trajectory files', '*.traject'),('xyz file', '*.xyz'))
-    filename = fd.askopenfile(title = 'Load trajectory file', initialdir ='/', filetypes = filetypes) # throw an exception if it fails
-    SetEntryText(entry_fileName, filename)
+    file = fd.askopenfile(mode ='r', title = 'Load trajectory file', initialdir ='.', filetypes = filetypes)
+    # can use try except here
+    if file != None:
+        SetLabelText(label_fileLoadIndicator, file.name)
+    else:
+        SetLabelText(label_fileLoadIndicator, 'No file selected')
     return
     
 button_loadFile = tk.Button(master=frame_fileDialog, text="Load", command = LoadTrajectoryFile)
