@@ -6,5 +6,4 @@ Created on Sat Jun 25 15:17:24 2022
 """
 import numpy as np
 
-class AtomCloud:
-    
+# class AtomCloud:
