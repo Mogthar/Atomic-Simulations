@@ -47,11 +47,10 @@ button_startPause.grid(row=0, column=0, sticky=tk.NSEW)
 button_stop.grid(row=0, column=1, sticky=tk.NSEW)
 
 ### slider tab ###
-def render_frame():
-    index = slider_frameControl.get()
-    animation.render_frame(animation.get_frame[index])
+def render_frame_at_index(index):
+    animation.render_frame(animation.get_frame(int(index)))
     
-slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=0, orient="horizontal", command = render_frame)
+slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=0, orient="horizontal", command = render_frame_at_index)
 slider_frameControl.grid(row=2, column=0, sticky=tk.NSEW)
 
 ### open folder tab ###

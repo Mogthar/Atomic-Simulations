@@ -29,6 +29,7 @@ class Animation:
         return self.frames[index]
     
     def render_frame(self, frame):
+        ## somehow need to clear current plot
         positions_2d = frame.get_2d_positions()
         self.axis.scatter(positions_2d[:,0], positions_2d[:,1])
         self.figure_to_canvas.draw()
