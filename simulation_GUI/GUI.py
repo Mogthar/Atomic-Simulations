@@ -40,7 +40,10 @@ frame_animationControls.grid(column=0, row=1, sticky=tk.NSEW) # possibly just EW
 # control buttons
 play_image = tk.PhotoImage(file="./play_image.png")
 
-button_startPause = tk.Button(master=frame_animationControls, text="PLAY")
+def play_animation():
+    animation.player.play_animation()
+
+button_startPause = tk.Button(master=frame_animationControls, text="PLAY", command = play_animation)
 button_stop = tk.Button(master=frame_animationControls, text="STOP")
 
 button_startPause.grid(row=0, column=0, sticky=tk.NSEW) # no stick and fixed size
@@ -52,6 +55,7 @@ def render_frame_at_index(index):
     
 slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=0, orient="horizontal", command = render_frame_at_index)
 slider_frameControl.grid(row=2, column=0, sticky=tk.NSEW)
+animation.slider = slider_frameControl
 
 ### open folder tab ###
 frame_fileDialog = tk.Frame(master=frame_animation, relief=tk.FLAT, borderwidth=5)

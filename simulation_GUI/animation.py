@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tkinter as tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import time
 
 class Animation:
     def __init__(self, canvas):
@@ -20,6 +21,9 @@ class Animation:
         self.figure_to_canvas = FigureCanvasTkAgg(self.plot_figure, self.canvas)
         self.figure_to_canvas.get_tk_widget().pack(fill=tk.BOTH)
         self.current_frame_index = None
+        self.slider = None
+        
+        self.player = Player(self)
     
     
     def add_frame(self, frame):
@@ -28,6 +32,9 @@ class Animation:
     
     def get_frame(self, index):
         return self.frames[index]
+    
+    def get_current_frame_index(self):
+        return self.current_frame_index
     
     def render_frame(self, frame_index):
         self.current_frame_index = frame_index
@@ -79,13 +86,17 @@ class Player:
     
     def play_animation(self):
         total_frame_number = self.animation.get_number_of_frames()
-        current_frame = 2 ####
         self.is_playing = True
         while self.is_playing:
-            # render next image and wait
-            # if last image then is_playing = false
-            # do a coroutine
-            print("playing")
+            next_frame_index = self.animation.get_current_frame_index() + 1
+            if next_frame_index >= total_frame_number:
+                self.is_playing = False
+            else:
+                self.animation.render_frame(next_frame_index)
+                if self.animation.slider != None:
+                    self.animation.slider.set(next_frame_index)
+                self.animation.render_frame(next_frame_index)
+                time.sleep(0.5)
         
     def pause_animation(self):
         self.is_playing = False
