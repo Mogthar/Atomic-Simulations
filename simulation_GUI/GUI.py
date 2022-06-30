@@ -5,8 +5,8 @@ import animation as anim
 
 window = tk.Tk()
 
-window.rowconfigure(0, minsize=100, weight=1)
-window.columnconfigure(0, minsize=100, weight = 3) # add padding
+window.rowconfigure(0, minsize=400, weight=1)
+window.columnconfigure(0, minsize=300, weight = 3) # add padding
 window.columnconfigure(1, minsize=100, weight = 1)
 
 #### set up two main frames which split the screen into animation part and simulation input ###
@@ -17,10 +17,10 @@ frame_simulation.grid(column=1, row=0, sticky=tk.NSEW)
 
 
 #### fill the animation side with the appropriate widgets ####
-frame_animation.columnconfigure(0, minsize=10, weight=1)
-frame_animation.rowconfigure(0, minsize=10, weight=6)
+frame_animation.columnconfigure(0, minsize=300, weight=1)
+frame_animation.rowconfigure(0, minsize=200, weight=6)
 for i in range(1,4):
-    frame_animation.rowconfigure(i, minsize=10, weight=1)
+    frame_animation.rowconfigure(i, minsize=30, weight=1)
     
 
 ### animation canvas and the animation object tied to it###
@@ -35,7 +35,7 @@ frame_animationControls.rowconfigure(0, minsize=10, weight=1)
 frame_animationControls.columnconfigure(0, minsize=10, weight=1)
 frame_animationControls.columnconfigure(1, minsize=10, weight=1)
 
-frame_animationControls.grid(column=0, row=1, sticky=tk.NSEW)
+frame_animationControls.grid(column=0, row=1, sticky=tk.NSEW) # possibly just EW
 
 # control buttons
 play_image = tk.PhotoImage(file="./play_image.png")
@@ -43,12 +43,12 @@ play_image = tk.PhotoImage(file="./play_image.png")
 button_startPause = tk.Button(master=frame_animationControls, text="PLAY")
 button_stop = tk.Button(master=frame_animationControls, text="STOP")
 
-button_startPause.grid(row=0, column=0, sticky=tk.NSEW)
-button_stop.grid(row=0, column=1, sticky=tk.NSEW)
+button_startPause.grid(row=0, column=0, sticky=tk.NSEW) # no stick and fixed size
+button_stop.grid(row=0, column=1, sticky=tk.NSEW) # no stick and fixed size
 
 ### slider tab ###
 def render_frame_at_index(index):
-    animation.render_frame(animation.get_frame(int(index)))
+    animation.render_frame(int(index))
     
 slider_frameControl = tk.Scale(master = frame_animation, from_ = 0, to=0, orient="horizontal", command = render_frame_at_index)
 slider_frameControl.grid(row=2, column=0, sticky=tk.NSEW)

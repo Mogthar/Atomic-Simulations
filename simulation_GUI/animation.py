@@ -19,7 +19,7 @@ class Animation:
         self.plot_figure, self.axis = plt.subplots()
         self.figure_to_canvas = FigureCanvasTkAgg(self.plot_figure, self.canvas)
         self.figure_to_canvas.get_tk_widget().pack(fill=tk.BOTH)
-        
+        self.current_frame_index = None
     
     
     def add_frame(self, frame):
@@ -29,9 +29,9 @@ class Animation:
     def get_frame(self, index):
         return self.frames[index]
     
-    def render_frame(self, frame):
-        ## somehow need to clear current plot
-        positions_2d = frame.get_2d_positions()
+    def render_frame(self, frame_index):
+        self.current_frame_index = frame_index
+        positions_2d = self.get_frame(frame_index).get_2d_positions()
         self.axis.clear()
         self.axis.scatter(positions_2d[:,0], positions_2d[:,1])
         self.figure_to_canvas.draw()
@@ -69,7 +69,36 @@ class Frame:
     def get_2d_positions(self):
         return self.positions[:,[0,2]]
         
+
+class Player:
+    def __init__(self, animation):
+        self.animation = animation
+        self.animation_speed = 1 # frames per second
+        self.is_playing = False
         
+    
+    def play_animation(self):
+        total_frame_number = self.animation.get_number_of_frames()
+        current_frame = 2 ####
+        self.is_playing = True
+        while self.is_playing:
+            # render next image and wait
+            # if last image then is_playing = false
+            # do a coroutine
+            print("playing")
+        
+    def pause_animation(self):
+        self.is_playing = False
+        return
+    
+    def reset_animation(self):
+        # render image 0;
+        # is playing false
+        return
+        
+    # have some kind of state isPlaying 
+    # if yes then loop through frames of animation at certain speed (variable of player)
+    
 # what file format will we use?
 # maybe a frame should also have a timestamp?
 # atom number
