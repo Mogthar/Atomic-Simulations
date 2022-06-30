@@ -14,10 +14,11 @@ class Animation:
     def __init__(self, canvas):
         self.frames = []
         self.canvas = canvas
-        self.plot_figure = plt.figure(figsize = (5,3), dpi = 100)
-        self.axis = self.plot_figure.add_subplot(111)
+        # self.plot_figure = plt.figure(figsize = (5,3), dpi = 100)
+        # self.axis = self.plot_figure.add_axes([0.1,0.1,0.8,0.8])
+        self.plot_figure, self.axis = plt.subplots()
         self.figure_to_canvas = FigureCanvasTkAgg(self.plot_figure, self.canvas)
-        self.figure_to_canvas.get_tk_widget().pack()
+        self.figure_to_canvas.get_tk_widget().pack(fill=tk.BOTH)
         
     
     
@@ -31,6 +32,7 @@ class Animation:
     def render_frame(self, frame):
         ## somehow need to clear current plot
         positions_2d = frame.get_2d_positions()
+        self.axis.clear()
         self.axis.scatter(positions_2d[:,0], positions_2d[:,1])
         self.figure_to_canvas.draw()
         return 
@@ -56,6 +58,7 @@ class Animation:
         
     def reset(self):
         self.frames = []
+        self.axis.clear()
         return
     
 class Frame:

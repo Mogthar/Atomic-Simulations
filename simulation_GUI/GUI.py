@@ -75,6 +75,8 @@ def load_trajectory_file():
         animation.reset()
         animation.load_frames_from_file(file)
         slider_frameControl.configure(to = animation.get_number_of_frames() - 1)
+        slider_frameControl.set(0)
+        render_frame_at_index(0)
     else:
         set_label_text(label_fileLoadIndicator, 'No file selected')
     return
@@ -85,10 +87,5 @@ button_loadFile.grid(row=0, column=1, sticky=tk.NSEW)
 # text field to confirm file loaded
 label_fileLoadIndicator = tk.Label(master=frame_fileDialog, text="No file loaded")
 label_fileLoadIndicator.grid(row=0, column=2, sticky = tk.W)
-
-#### setup the animation object ###
-
-main_animation = anim.Animation(canvas_animation)
-
 
 window.mainloop()
