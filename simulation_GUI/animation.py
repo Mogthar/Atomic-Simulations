@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tkinter as tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import time
+import asyncio
 
 class Animation:
     def __init__(self, canvas):
@@ -22,6 +22,7 @@ class Animation:
         self.figure_to_canvas.get_tk_widget().pack(fill=tk.BOTH)
         self.current_frame_index = None
         self.slider = None
+        self.startPause_button = None
         
         self.player = Player(self)
     
@@ -48,6 +49,7 @@ class Animation:
         return len(self.frames)
     
     def load_frames_from_file(self, file):
+        self.reset()
         with file as f:
             while True:
                 atom_number_str = f.readline()
@@ -80,31 +82,42 @@ class Frame:
 class Player:
     def __init__(self, animation):
         self.animation = animation
-        self.animation_speed = 1 # frames per second
+        self.animation_speed = 2 # frames per second
         self.is_playing = False
         
     
     def play_animation(self):
-        total_frame_number = self.animation.get_number_of_frames()
         self.is_playing = True
+        self.animation.startPause_button['text'] = 'PAUSE'
+        # asyncio.run(self.loop_images())
+        self.loop_images()
+    
+    #async def loop_images(self):
+    def loop_images(self):
         while self.is_playing:
             next_frame_index = self.animation.get_current_frame_index() + 1
-            if next_frame_index >= total_frame_number:
+            if next_frame_index >= self.animation.get_number_of_frames():
                 self.is_playing = False
+                self.animation.startPause_button['text'] = 'START'
             else:
                 self.animation.render_frame(next_frame_index)
-                if self.animation.slider != None:
-                    self.animation.slider.set(next_frame_index)
+                self.animation.slider.set(next_frame_index)
                 self.animation.render_frame(next_frame_index)
-                time.sleep(0.5)
+                # await asyncio.sleep(1 / self.animation_speed)
+                
+        
+        
         
     def pause_animation(self):
         self.is_playing = False
+        self.animation.startPause_button['text'] = 'START'
         return
     
-    def reset_animation(self):
-        # render image 0;
-        # is playing false
+    def stop_animation(self):
+        self.is_playing = False
+        self.animation.startPause_button['text'] = 'START'
+        self.animation.slider.set(0)
+        self.animation.render_frame(0)
         return
         
     # have some kind of state isPlaying 

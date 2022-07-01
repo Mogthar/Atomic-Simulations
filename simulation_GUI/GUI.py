@@ -41,10 +41,17 @@ frame_animationControls.grid(column=0, row=1, sticky=tk.NSEW) # possibly just EW
 play_image = tk.PhotoImage(file="./play_image.png")
 
 def play_animation():
-    animation.player.play_animation()
+    if not (animation.player.is_playing):
+        animation.player.play_animation()
+    else:
+        animation.player.pause_animation()
+    
+def stop_animation():
+    animation.player.stop_animation()
 
 button_startPause = tk.Button(master=frame_animationControls, text="PLAY", command = play_animation)
-button_stop = tk.Button(master=frame_animationControls, text="STOP")
+button_stop = tk.Button(master=frame_animationControls, text="STOP", command = stop_animation)
+animation.startPause_button = button_startPause
 
 button_startPause.grid(row=0, column=0, sticky=tk.NSEW) # no stick and fixed size
 button_stop.grid(row=0, column=1, sticky=tk.NSEW) # no stick and fixed size
@@ -76,7 +83,6 @@ def load_trajectory_file():
     if file != None:
         set_label_text(label_fileLoadIndicator, file.name)
         # reset the animation
-        animation.reset()
         animation.load_frames_from_file(file)
         slider_frameControl.configure(to = animation.get_number_of_frames() - 1)
         slider_frameControl.set(0)
@@ -91,5 +97,9 @@ button_loadFile.grid(row=0, column=1, sticky=tk.NSEW)
 # text field to confirm file loaded
 label_fileLoadIndicator = tk.Label(master=frame_fileDialog, text="No file loaded")
 label_fileLoadIndicator.grid(row=0, column=2, sticky = tk.W)
+
+##### simulation side ####
+# desing today
+
 
 window.mainloop()
