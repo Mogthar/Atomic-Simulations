@@ -7,6 +7,7 @@ Created on Sat Jun 25 15:17:24 2022
 import numpy as np
 import scipy.constants
 from numba import jit
+import ramps
 
 class Simulation:
     def __init__(self):
@@ -19,13 +20,33 @@ class Simulation:
         self.sampling_delta_t = 1E-3
         self.total_simulation_time = 1.0
         self.current_simulation_time = 0.0
-        self.file_name = "dummy"
+        self.save_file_name = "dummy"
     
     # there will be a gui button that will load data from gui into the simulation
     # and that will initialize the particles
     
+    @jit(nopython=True, parallel=True)
     def propagate(self):
-        return
+        # old_forces = Forces(positions, P1, waist_y1, waist_z1, gravity, current_foc_pos)
+        old_forces = self.calculate_forces(self.atom_cloud.positions, self.current_simulation_time)
+    
+        new_positions = self.atom_cloud.positions + \
+                        self.atom_cloud.momenta * self.delta_t / self.atom_cloud.particle_mass + \
+                        1/2 * old_forces / self.atom_cloud.particle_mass * (self.delta_t**2)
+        # is this line necessary? maybe instead of new positions above just redefine the atom_cloud positions                
+        self.atom_cloud.positions = new_positions
+        
+        new_forces = self.calculate_forces(self.atom_cloud.positions, self.current_simulation_time + self.delta_t)
+        
+        new_momenta = self.atom_cloud.momenta + 1/2 * (old_forces + new_forces) * self.delta_t
+        # same comment as above
+        self.atom_cloud.momenta = new_momenta
+    
+    @jit(nopython=True, parallel=True)
+    def calculate_forces(self, particle_positions, time):
+        # go through all the field objects
+        # calculate the forces
+        # first detunings, then forces
     
     def collide_particles(self):
         return
@@ -49,15 +70,20 @@ class Simulation:
     
     def save_simulation_settings(self, file):
         # save simulation settings
+        # this should include all the ramp info etc
         return
-        
+    
+    def check_ramps(self):
+        # check that all ramps are defined and have appropriate length
+        # if not then raise error and maybe fill the rest of the ramp with a constant ramp
+        return
     
     def run_simulation(self):
         sampling_timer = 0.0
         while(self.current_simulation_time < self.total_simulation_time):
             self.propagate()
             self.collide_particles()
-            # maybe move the simulation box
+            # maybe move the simulation box or have simulation box also follow a ramp! 
             
             self.current_simulation_time += self.delta_t
             sampling_timer += self.delta_t
@@ -74,40 +100,126 @@ class Simulation:
 # each effector/field should have a calc force, calc shift method
 # each effector should have it own ramp object!!!
             
-            
-        
-            
         
 @jit(nopython=True, parallel=True)
-def timeEvolutionBeeman(positions, momenta, old_positions, P1, waist_y1, waist_z1, next_waist_y1, next_waist_z1, previous_waist_y1, previous_waist_z1, gravity, delta_t, current_foc_pos, next_foc_pos, previous_foc_pos):
-    old_forces = Forces(old_positions, P1, previous_waist_y1, previous_waist_z1, gravity, previous_foc_pos)
-    current_forces = Forces(positions, P1, waist_y1, waist_z1, gravity, current_foc_pos)
-    new_positions = positions + momenta * delta_t / particle_mass + 1/6 * ((4 * current_forces - old_forces) / particle_mass) * delta_t**2
-    # new_momenta = np.zeros((len(new_positions, 3)))
-    for i in range(2):
-        new_forces = Forces(new_positions, P1, next_waist_y1, next_waist_z1, gravity, next_foc_pos)
-        new_positions = positions + momenta / particle_mass * delta_t + 1/6 * (new_forces + 2* current_forces) / particle_mass * delta_t**2
-        new_momenta = (new_positions - positions) * particle_mass / delta_t + 1/6 * (2 * new_forces + current_forces)*delta_t
+def timeEvolutionVerlet(positions, momenta, P1, waist_y1, waist_z1, next_waist_y1, next_waist_z1, gravity, delta_t, current_foc_pos, next_foc_pos):
+    old_forces = Forces(positions, P1, waist_y1, waist_z1, gravity, current_foc_pos)
+    
+    new_positions = positions + momenta * delta_t / particle_mass + 1/2 * old_forces / particle_mass * delta_t**2
+    
+    new_forces = Forces(new_positions, P1, next_waist_y1, next_waist_z1, gravity, next_foc_pos)
+    new_momenta = momenta + 1/2 * (old_forces + new_forces) * delta_t
+    return new_positions, new_momenta
 
-    return new_positions, new_momenta, positions
+@jit(nopython=True, parallel=True)
+def Forces(positions, P1, waist_y1, waist_z1, gravity, focal_position):
+    force_odt1 = calc_force1(positions, waist_y1, waist_z1, P1, focal_position)
+    if (gravity):
+        gravitational_force = np.zeros(positions.shape)
+        gravitational_force[:,2] = - particle_mass * scipy.constants.g
+        return force_odt1 + gravitational_force
+    else:
+        return force_odt1
+    
+#this needs redoing because scattering is along the beam 
+@jit(nopython=True, parallel=True)
+def ScatteringHeating(n_scatt_events, wavelength):
+    momentum_magnitude = scipy.constants.hbar * (2 * np.pi / wavelength) * np.sqrt(n_scatt_events)
+    random_phi = np.random.rand(len(n_scatt_events)) * 2 * np.pi
+    random_theta = np.arccos(1 - 2 * np.random.rand(len(n_scatt_events)))
+    random_momenta = momentum_magnitude.reshape((len(n_scatt_events),1)) * np.stack((np.sin(random_theta)*np.sin(random_phi),np.sin(random_theta)*np.cos(random_phi),np.cos(random_theta)), axis=1)
+    return random_momenta
+
+@jit(nopython=True, parallel=True)
+def ScatteringForce(MOT_intensity, detuning, B_field, position, momentum, P1, P2, waist_y1, waist_z1, waist_y2, waist_z2, angle1, angle2, time, dith_ampl, del_t):
+    # calculate local detuning i.e. magnetic field and stark
+    B_magnitude = np.sqrt((B_field*B_field).sum(axis=1))
+    magnetic_detuning = -MagneticFieldShift(B_field, mj_excited) / scipy.constants.hbar
+    stark_detuning = -StarkShift(P1, P2, position, waist_y1, waist_z1, waist_y2, waist_z2, angle1, angle2, time, dith_ampl) / scipy.constants.hbar
+    local_detuning = detuning + magnetic_detuning + stark_detuning
+    
+    # could be taken out and made into a constant
+    scattering_force_prefactor = scipy.constants.hbar * MOT_linewidth * np.pi / MOT_wavelength
+    # loop through beams
+    total_scattering_force = np.zeros(position.shape)
+    total_scattering_events = np.zeros(len(position))
+    for i in range(len(MOT_beam_direction)):
+        # the doppler detuning is -k*v
+        doppler_detuning = - 2 * np.pi / (MOT_wavelength) * np.dot(momentum / particle_mass, MOT_beam_direction[i])
+        # calculate s parameter. 2 rabi**2 / gamma**2
+        # angle between beam and magnetic field
+        # the polarisation comes in because the beam in the reference frame of the field doesnt necessarily look
+        # like circularly polarized; only the sigma - component of the beam can drive the transition and thats basically
+        # what is being worked out here; since the atoms sit bellow the zero of the field i.e. they are always in a region
+        # where all the other mj states are just too far detuned because of zeeman shift, we only care about the -7 transition
+        # and hence only the sigma - component of each beam!!!!
+        cos_B_k = np.dot(B_field, MOT_beam_direction[i]) / B_magnitude
+        s_prefactor = 4 * MOT_intensity[i] / (scipy.constants.c * scipy.constants.epsilon_0 * (scipy.constants.hbar * MOT_linewidth)**2)
+        s_dipole = dipole_elem_squared * ((1 - cos_B_k * MOT_beam_polarisation[i])**2) / 4 
+        s = s_prefactor * s_dipole
+        scatt_frac = ScatteringFraction(s, local_detuning + doppler_detuning)
+        total_scattering_events += MOT_linewidth / 2 * scatt_frac * del_t
+        total_scattering_force += scattering_force_prefactor * MOT_beam_direction[i] * scatt_frac.reshape((len(position),1))
+        # total_scattering_force += MOT_beam_direction[i] * total_scattering_events.reshape((len(position),1)) * (2 * scattering_force_prefactor / (del_t * MOT_linewidth))
+        # Milan's thesis suggests using s' because the other beams deplete the lower level but we are in the low s regime anyway
+        # so the depletion is not that strong and there are always atoms available
+    
+    return total_scattering_force, total_scattering_events
 
 
 class Field:
     def __init__(self):
-        self.whateva = None
+        pass
+    
+    def calculate_force(self, positions, time):
+        pass
+    
+    def calculate_detuning(self, position, time):
+        pass
+    
+    def calcualte_scattering_heating(self, position, time):
+        pass
+    
+# somehow need to smartly work with the time variable, ramps define for each field and the positions
 
-class Effector:
-    def __init__(self):
-        self.whateva = None
+        
+# what fields do we have 
+# magnetic (both coils need to have different ramps! but thats fine, hve two variables for each ramp) - detuning, force
+# IR laser field - detuning, force, scattering heating
+# MOT laser fields - no detuning?, force from scatterin, scattering heating
 
 class Ramp:
     def __init__(self):
-        self.type = None
+        self.ramp_segments = []
+        
+    def add_ramp_segment(self, ramp_segment):
+        self.ramp_segments.append(ramp_segment)
         
     def get_value(self, time):
-        return
-        
-# should have ramp subclass that inherits from ramp and that specifies the ramp?
+        value = 0.0
+        for ramp_segment in self.ramp_segments:
+            if(ramp_segment.is_time_in_segment(time)):
+                value += ramp_segment.get_value(time)
+        return value
+
+class RampSegment:
+    def __init__(self):
+        self.start_time = 0
+        self.end_time = 0
+        self.ramp_type = None
+        self.start_value = 0
+        self.end_value = 0
+    
+    def is_time_in_segment(self, time):
+        if(time >= self.start_time and time <= self.end_time):
+            return True
+        else:
+            return False
+    
+    def get_value(self, time):
+        return self.ramp_type(time - self.start_time, self.end_time - self.start_time, self.start_value, self.end_value)
+
+# define ramps in the format: ramp(time, ramp_time, start_value, end_value)
 # should define functions for the ramps on the side and then just pass them to the Ramp initilaizer as an argument
 
 class AtomCloud:
@@ -150,3 +262,5 @@ class SimulationBox:
     def __init__(self, center, size):
         self.center = center
         self.size = size
+        # have the simulation box follow the same ramp as the odt
+        self.ramp = None
