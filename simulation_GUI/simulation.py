@@ -99,17 +99,6 @@ class Simulation:
     
 # each effector/field should have a calc force, calc shift method
 # each effector should have it own ramp object!!!
-            
-        
-@jit(nopython=True, parallel=True)
-def timeEvolutionVerlet(positions, momenta, P1, waist_y1, waist_z1, next_waist_y1, next_waist_z1, gravity, delta_t, current_foc_pos, next_foc_pos):
-    old_forces = Forces(positions, P1, waist_y1, waist_z1, gravity, current_foc_pos)
-    
-    new_positions = positions + momenta * delta_t / particle_mass + 1/2 * old_forces / particle_mass * delta_t**2
-    
-    new_forces = Forces(new_positions, P1, next_waist_y1, next_waist_z1, gravity, next_foc_pos)
-    new_momenta = momenta + 1/2 * (old_forces + new_forces) * delta_t
-    return new_positions, new_momenta
 
 @jit(nopython=True, parallel=True)
 def Forces(positions, P1, waist_y1, waist_z1, gravity, focal_position):
@@ -179,6 +168,18 @@ class Field:
     
     def calcualte_scattering_heating(self, position, time):
         pass
+    
+class MagneticField:
+    def __init__(self):
+        self.feshbach_field = None
+        self.gradient_field = None
+    
+class FeshbachField:
+    
+
+class GradientField:
+
+
     
 # somehow need to smartly work with the time variable, ramps define for each field and the positions
 
