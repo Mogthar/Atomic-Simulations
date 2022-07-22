@@ -25,7 +25,6 @@ class Simulation:
     # there will be a gui button that will load data from gui into the simulation
     # and that will initialize the particles
     
-    @jit(nopython=True, parallel=True)
     def propagate(self):
         # old_forces = Forces(positions, P1, waist_y1, waist_z1, gravity, current_foc_pos)
         old_forces = self.calculate_forces(self.atom_cloud.positions, self.current_simulation_time)
@@ -42,11 +41,12 @@ class Simulation:
         # same comment as above
         self.atom_cloud.momenta = new_momenta
     
-    @jit(nopython=True, parallel=True)
     def calculate_forces(self, particle_positions, time):
         # go through all the field objects
         # calculate the forces
         # first detunings, then forces
+        # dont forget about gravityyyyy
+        return
     
     def collide_particles(self):
         return
@@ -156,38 +156,92 @@ def ScatteringForce(MOT_intensity, detuning, B_field, position, momentum, P1, P2
     return total_scattering_force, total_scattering_events
 
 
+# instead of positions and cloud separately just pass in the cloud? doesnt matter I guess
 class Field:
     def __init__(self):
         pass
     
-    def calculate_force(self, positions, time):
+    def calculate_force(self, positions, time, cloud):
         pass
     
-    def calculate_detuning(self, position, time):
+    def calculate_detuning(self, positions, time, cloud):
         pass
     
-    def calcualte_scattering_heating(self, position, time):
+    def calcualte_scattering_heating(self, positions, time, cloud):
         pass
     
-class MagneticField:
-    def __init__(self):
-        self.feshbach_field = None
-        self.gradient_field = None
     
-class FeshbachField:
+class DipoleField(Field):
+class DipoleBeam():
+# or a more general class usable for the other field
+class LaserBeam():
+    
+class ResonantField(Field):
+class ResonantBeam():
     
 
-class GradientField:
-
-
     
-# somehow need to smartly work with the time variable, ramps define for each field and the positions
-
+###### MAGNETIC FIELD ######
+    
+class MagneticField(Field):
+    def __init__(self, uniform_field = UniformMagneticField(), gradient_field = GradientMagneticField()):
+        self.uniform_field = uniform_field
+        self.gradient_field = gradient_field
+    
+    # because of the order of operations can possibly chache the field magnitude
+    def calculate_detuning(self, positions, time, cloud):
+        field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
+        field_magnitude = np.sqrt((field * field).sum(axis = 1))
+        return cloud.get_Zeeman_shift_prefactor() * field_magnitude
         
-# what fields do we have 
-# magnetic (both coils need to have different ramps! but thats fine, hve two variables for each ramp) - detuning, force
-# IR laser field - detuning, force, scattering heating
-# MOT laser fields - no detuning?, force from scatterin, scattering heating
+    def calculate_force(self, positions, time, cloud):
+        field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
+        field_magnitude = np.sqrt((field * field).sum(axis = 1))
+        gradient_value = self.gradient_field.gradient_ramp.get_value(time)
+        
+        magnitude_gradient_x = field[:,0] * (-gradient_value / 2) / field_magnitude
+        magnitude_gradient_y = field[:,0] * (-gradient_value / 2) / field_magnitude
+        magnitude_gradient_z = field[:,0] * (gradient_value) / field_magnitude
+        
+        return cloud.get_ground_state_moment() * np.stack((magnitude_gradient_x, magnitude_gradient_y, magnitude_gradient_z), axis=1)
+        
+    def calculate_scattering_heating(self, positions, time, cloud):
+        pass
+    
+class UniformMagneticField:
+    # initialize with empty ramps
+    # empty ramp returns 0 when asked for value
+    def __init__(self, x_ramp = Ramp(), y_ramp = Ramp(), z_ramp = Ramp()):
+        self.x_ramp = x_ramp
+        self.y_ramp = y_ramp
+        self.z_ramp = z_ramp
+        
+    def calculate_field(self, positions, time)
+        x_value = x_ramp.get_value(time)
+        y_value = y_ramp.get_value(time)
+        z_value = z_ramp.get_value(time)
+        
+        field = np.array([[x_value, y_value, z_value]])
+        
+        return np.repeat(field, np.size(positions, axis = 0), axis = 0)
+    
+class GradientMagneticField:
+    def __init__(self, gradient_ramp = Ramp()):
+        self.gradient_ramp = gradient_ramp
+    
+    def calculate_field(self, positions, time):
+        x_pos = positions[:,0]
+        y_pos = positions[:,1]
+        z_pos = positions[:,2]
+        
+        gradient_value = self.gradient_ramp.get_value(time)
+        Bx = -gradient_value /2 * x
+        By = -gradient_value /2 * y
+        Bz =  gradient_value * z
+        
+        return np.stack((Bx,By,Bz), axis=1)
+
+####### RAMPS #######
 
 class Ramp:
     def __init__(self):
@@ -196,6 +250,7 @@ class Ramp:
     def add_ramp_segment(self, ramp_segment):
         self.ramp_segments.append(ramp_segment)
         
+    # empty ramp returns 0 when asked for value
     def get_value(self, time):
         value = 0.0
         for ramp_segment in self.ramp_segments:
@@ -219,21 +274,25 @@ class RampSegment:
     
     def get_value(self, time):
         return self.ramp_type(time - self.start_time, self.end_time - self.start_time, self.start_value, self.end_value)
-
-# define ramps in the format: ramp(time, ramp_time, start_value, end_value)
-# should define functions for the ramps on the side and then just pass them to the Ramp initilaizer as an argument
+    
+####### CLOUD ######
 
 class AtomCloud:
+    # try and initilize as many of these as possible so that we get no errors!
+    # 
     def __init__(self, number_of_simulated_particles, number_of_real_particles):
         self.positions = np.zeros((number_of_simulated_particles, 3))
         self.momenta = np.zeros((number_of_simulated_particles, 3))
         self.alpha = np.ones((number_of_simulated_particles, 3)) * (number_of_real_particles / number_of_simulated_particles)
         
         self.particle_mass = 167.9323702 * scipy.constants.physical_constants['atomic mass unit-kilogram relationship'][0]
+        
         self.lande_g_ground = 1.163801
         self.mj_ground = -6
         self.lande_g_excited = 1.195
         self.mj_excited = -7
+        self.magneton = scipy.constants.physical_constants['Bohr magneton'][0]
+        
         self.scatt_cross_section = 8 * np.pi * (150 * scipy.constants.physical_constants['atomic unit of length'][0])**2
     
     # initilaize momenta from boltzmann distribution at certain temperature    
@@ -258,6 +317,13 @@ class AtomCloud:
         remaining_momenta = self.momenta[culling_mask]
         momenta_magnitude = np.linalg.norm(remaining_momenta, axis=1)
         return np.average(momenta_magnitude**2) / (3 * self.particle_mass * scipy.constants.k)
+    
+    def get_Zeeman_shift_prefactor(self):
+        return self.magneton * (self.mj_excited * self.lande_g_excited - self.mj_ground * self.lande_g_ground)
+    
+    def get_ground_state_moment(self):
+        return - self.magneton * self.lande_g_ground * self.mj_ground
+        
 
 class SimulationBox:
     def __init__(self, center, size):
