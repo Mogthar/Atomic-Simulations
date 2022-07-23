@@ -172,10 +172,63 @@ class Field:
     
     
 class DipoleField(Field):
-class DipoleBeam():
-# or a more general class usable for the other field
-class LaserBeam():
+    def __init__(self):
+        self.dipole_beams = []
     
+    def add_beam(self, beam):
+        self.dipole_beams.append(beam)
+    
+    def calculate_force(self, positions, time, cloud):
+        pass
+    
+    def calculate_detuning(self, positions, time, cloud):
+        pass
+    
+    def calcualte_scattering_heating(self, positions, time, cloud):
+        pass
+    
+    def calculate_trapping_frequencies():
+        pass
+    
+# TODO - add a way of changing the wavelength via the GUI
+class DipoleBeam():
+    def __init__(self, beam_ramp = Ramp(), waist_ramp = Ramp(), focus_ramp = Ramp()):
+        self.wavelength = 1030E-9
+        self.beam_ramp = beam_ramp
+        self.waist_ramp = waist_ramp
+        self.focus_ramp = focus_ramp
+        self.theta_z = 0
+        self.theta_x = 0
+    
+    def rotate_beam(self, theta_z, theta_x):
+        self.theta_z = theta_z
+        self.theta_x = theta_x
+
+    
+    def reset_beam_rotation(self):
+        self.theta_x = 0
+        self.theta_z = 0
+    
+    def get_transformation_matrix(self):
+        R_z = np.array([[np.cos(self.theta_z), -np.sin(self.theta_z), 0],[np.sin(self.theta_z), np.cos(self.theta_z), 0],[0,0,1]])
+        R_x = np.array([[1, 0, 0],[0, np.cos(self.theta_x), -np.sin(self.theta_x)],[0, np.sin(self.theta_x), np.cos(self.theta_x)]])
+        return np.matmul(R_x, R_z)
+    
+    def convert_global_coordinates_to_local(self, positions):
+        M_transform_inverse = np.transpose(self.get_transformation_matrix())
+        return np.transpose(np.matmul(M_transform_inverse, np.transpose(positions)))
+        
+    def calculate_waist(self, waist_0, z_rayleigh, x):
+        return waist_0 * np.sqrt(1 + (x / z_rayleigh)**2)
+    
+    def calculate_rayleigh_range(self, waist_0):
+        return np.pi * (waist_0**2) / self.wavelength
+    
+    
+    
+    def calculate_detuning(self, positions, time, cloud):
+    
+        
 class ResonantField(Field):
 class ResonantBeam():
     
