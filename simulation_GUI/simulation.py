@@ -12,12 +12,14 @@ import ramps
 # TODO - when initializing many of the objects initialize the ramps to something relevant to our experiment
 # i.e. dipolar beams to the appropriate waists etc.
 # TODO - add trap frequency calculation to the code
-# 
+# NOTE: we are actually in high field seeking state! U = -mu B and for electrons mu = -g * bohr * mj
+# so we have U = g * bohr * B_magnitude * mj and we have mj < 0 !!
+# TODO - have a way of choosing the box size in the gui - one will be manual and the other one will be based on main dipole beam - just chose waists (default 3)
 
 class Simulation:
     def __init__(self):
         self.atom_cloud = AtomCloud(100, 100)
-        self.simulation_box = SimulationBox(np.zeros(3), np.ones(3))
+        self.simulation_box = SimulationBox(Ramp(), np.ones(3))
         self.fields = []
         self.effectors = []
         self.gravity = True
@@ -166,6 +168,13 @@ def ScatteringForce(MOT_intensity, detuning, B_field, position, momentum, P1, P2
     
     return total_scattering_force, total_scattering_events
 
+##### SIMULATIONN BOX #####
+
+class SimulationBox:
+    def __init__(self, center_position_ramp = Ramp(), size):
+        self.center_position_ramp = center_position_ramp
+        # array of shape 3 storing the x, y and z box dimensions
+        self.size = size
 
 # instead of positions and cloud separately just pass in the cloud? doesnt matter I guess
 class Field:
@@ -180,7 +189,43 @@ class Field:
     
     def calcualte_scattering_heating(self, positions, time, delta_t, cloud):
         pass
+
+class ResonantField(Field):
+    def __init__(self):
+        self.resonant_beams = []
     
+    def add_beam(self, beam):
+        self.resonant_beams.append(beam)
+        
+    def calculate_force(self, positions, time, cloud):
+        pass
+        
+    def calculate_detuning(self, positions, time, cloud):
+        return np.zeros(positions.shape)
+    
+    def calculate_scattering_heating(self, positions, time, cloud):
+        pass
+    
+class ResonantBeam():
+    def __init__(self, detuning_ramp = Ramp(), intensity_ramp = Ramp(), beam_direction = np.array([1,0,0]), polarisation = -1):
+        self.detuning_ramp = detuning_ramp
+        self.intensity_ramp = intensity_ramp
+        self.polarisation = polarisation
+        self.beam_direction = beam_direction
+        
+        ''' constant parameters for a given transition '''
+        self.wavelength = 582.84E-9                 # m
+        self.saturation_intensity = 1.3             # W / m
+        self.transition_linewidth = 2*np.pi*190*1E3 # rad /s
+        self.dipole_element_squared = self.transition_linewidth * 3 * np.pi * scipy.constants.epsilon_0 * scipy.constants.hbar * (self.wavelength / (2 * np.pi))**3
+        
+        
+        
+        
+        
+    
+    
+####### DIPOLAR FIELD #######
     
 class DipoleField(Field):
     def __init__(self):
@@ -213,7 +258,11 @@ class DipoleField(Field):
     # experimental feature, needs a bit more thinking. Can do either analytical and assume harmonic potential
     # or can do some kind of hessian calculation
     def calculate_trapping_frequencies():
-        pass
+        omega_squared_total = np.zeros(3)
+        for dipole_beam in self.dipole_beams:
+            M_transform_inverse = np.transpose(dipole_beam.get_transformation_matrix())
+            omega_squared_beam = dipole_beam.calculate_trapping_frequencies()**2
+            
     
 # TODO - add a way of changing the wavelength via the GUI
 class DipoleBeam():
@@ -309,12 +358,21 @@ class DipoleBeam():
         random_heating_momenta = heating_momentum_magnitude.reshape((len(number_of_scattering_events),1)) * \
                          np.stack((np.sin(random_theta)*np.sin(random_phi), np.sin(random_theta)*np.cos(random_phi), np.cos(random_theta)), axis=1)
         return random_heating_momenta
-        
-class ResonantField(Field):
-class ResonantBeam():
     
+    def calculate_trapping_frequencies(self, time, cloud):
+        omega_x_squared = -(2 * cloud.intensity_prefactor * self.power_ramp.get_value(time)) / \
+                           (np.pi * cloud.particle_mass * self.waist_y_ramp.get_value(time) * self.waist_z_ramp.get_value(time)) * \
+                           (np.power(self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time)),-2) + \
+                            np.power(self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time)),-2))
+                   
+        omega_y_squared = -(8 * self.intensity_prefactor * self.power_ramp.get_value(time)) / \
+                           (np.pi * np.power(self.waist_y_ramp.get_value(time), 3) * self.waist_z_ramp.get_value(time) * cloud.particle_mass)
+                           
+        omega_z_squared = -(8 * self.intensity_prefactor * self.power_ramp.get_value(time)) / \
+                           (np.pi * np.power(self.waist_z_ramp.get_value(time), 3) * self.waist_y_ramp.get_value(time) * cloud.particle_mass)
+    
+        return np.sqrt(np.array([omega_x_squared, omega_y_squared, omega_z_squared]))
 
-    
 ###### MAGNETIC FIELD ######
     
 class MagneticField(Field):
@@ -340,7 +398,7 @@ class MagneticField(Field):
         return cloud.get_ground_state_moment() * np.stack((magnitude_gradient_x, magnitude_gradient_y, magnitude_gradient_z), axis=1)
         
     def calculate_scattering_heating(self, positions, time, cloud):
-        pass
+        return np.zeros(positions.shape)
     
 class UniformMagneticField:
     # initialize with empty ramps
@@ -427,7 +485,7 @@ class AtomCloud:
         self.mj_excited = -7
         self.magneton = scipy.constants.physical_constants['Bohr magneton'][0]
         
-        self.scatt_cross_section = 8 * np.pi * (150 * scipy.constants.physical_constants['atomic unit of length'][0])**2
+        self.scatt_cross_section = 8 * np.pi * (150 * scipy.constants.physical_constants['atomic unit of length'][0])**2  # need to check this!!
         self.polarizability = 2.9228099E-39
         self.intensity_prefactor = - self.polarizability / (2 * scipy.constants.epsilon_0 * scipy.constants.c)
         self.scattering_rate = 1.79341521457477E-10   # in units of s-1 per W/m2 i.e. multiply by intensity to get the real scattering rate
@@ -461,10 +519,3 @@ class AtomCloud:
     def get_ground_state_moment(self):
         return - self.magneton * self.lande_g_ground * self.mj_ground
         
-
-class SimulationBox:
-    def __init__(self, center, size):
-        self.center = center
-        self.size = size
-        # have the simulation box follow the same ramp as the odt
-        self.ramp = None
