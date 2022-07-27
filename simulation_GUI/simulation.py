@@ -15,18 +15,24 @@ import ramps
 # NOTE: we are actually in high field seeking state! U = -mu B and for electrons mu = -g * bohr * mj
 # so we have U = g * bohr * B_magnitude * mj and we have mj < 0 !!
 # TODO - have a way of choosing the box size in the gui - one will be manual and the other one will be based on main dipole beam - just chose waists (default 3)
+# TODO - add method into simulation itself to initialize box at a given number of beam waists/ rayleigh ranges
 
 class Simulation:
     def __init__(self):
         self.atom_cloud = AtomCloud(100, 100)
         self.simulation_box = SimulationBox(Ramp(), np.ones(3))
+        self.gamma_box = 1.0 # fraction of mean free path used as box size
         self.fields = []
-        self.effectors = []
         self.gravity = True
+        
+        ''' time related parameters'''
         self.delta_t = 1E-6
+        self.gamma_t_oscillation = 1E-3
+        self.gamma_t_collision = 0.1
         self.sampling_delta_t = 1E-3
         self.total_simulation_time = 1.0
         self.current_simulation_time = 0.0
+        
         self.save_file_name = "dummy"
     
     # there will be a gui button that will load data from gui into the simulation
@@ -60,8 +66,14 @@ class Simulation:
     def collide_particles(self):
         return
     
+    # TODO add collision based dt
     def recalculate_delta_t(self):
-        return
+        oscillation_dt = self.delta_t
+        for field in self.fields:
+            if isinstance(field, DipoleField):
+                maximum_trapping_frequency = np.amax(field.calculate_trapping_frequencies())
+                oscillation_dt = self.gamma_t_oscillation * 2 * np.pi / maximum_trapping_frequency
+        self.delta_t = oscillation_dt
     
     def initialize_cloud_from_gui(self, settings):
         return
@@ -109,9 +121,21 @@ class Simulation:
         self.sample_trajectory(self.file_name + ".traj")
         self.save_final_configuration(self.file_name + ".fin")
         self.save_simulation_settings(self.file_name + ".set")
+        
+    ''' set of methods that calculate cloud properties given the trapping fields '''
     
-# each effector/field should have a calc force, calc shift method
-# each effector should have it own ramp object!!!
+    def calculate_average_density_harmonicApprox(self):
+        omega_bar = 0.0
+        for field in self.fields:
+            if isinstance(field, DipoleField):
+                trapping_frequencies = field.calculate_trapping_frequencies
+                omega_bar = np.power(trapping_frequencies[0] * trapping_frequencies[1] * trapping_frequencies[2], 1/3)
+        
+        number_of_particles = self.atom_cloud.get_real_particle_number()
+        cloud_temperature = self.atom_cloud.calculate_cloud_temperature()
+        average_density = 2**(-3/2) * number_of_particles * omega_bar**3 * \
+                          np.power(self.atom_cloud.particle_mass / (2 * np.pi * scipy.constants.k * cloud_temperature), 3/2)
+        return average_density
 
 @jit(nopython=True, parallel=True)
 def Forces(positions, P1, waist_y1, waist_z1, gravity, focal_position):
@@ -176,7 +200,10 @@ class SimulationBox:
         # array of shape 3 storing the x, y and z box dimensions
         self.size = size
 
-# instead of positions and cloud separately just pass in the cloud? doesnt matter I guess
+
+###### FIELDS ######
+
+# TODO instead of positions and cloud separately just pass in the cloud? doesnt matter I guess
 class Field:
     def __init__(self):
         pass
@@ -189,6 +216,9 @@ class Field:
     
     def calcualte_scattering_heating(self, positions, time, delta_t, cloud):
         pass
+    
+    
+###### RESONANT FIELD ######
 
 class ResonantField(Field):
     def __init__(self):
@@ -260,9 +290,11 @@ class DipoleField(Field):
     def calculate_trapping_frequencies():
         omega_squared_total = np.zeros(3)
         for dipole_beam in self.dipole_beams:
-            M_transform_inverse = np.transpose(dipole_beam.get_transformation_matrix())
+            M_transform = dipole_beam.get_transformation_matrix()
             omega_squared_beam = dipole_beam.calculate_trapping_frequencies()**2
-            
+            omega_squared_total += np.matmul(M_transform**2, omega_squared_beam)
+        
+        return np.sqrt(omega_squared_total)            
     
 # TODO - add a way of changing the wavelength via the GUI
 class DipoleBeam():
@@ -408,7 +440,7 @@ class UniformMagneticField:
         self.y_ramp = y_ramp
         self.z_ramp = z_ramp
         
-    def calculate_field(self, positions, time)
+    def calculate_field(self, positions, time):
         x_value = x_ramp.get_value(time)
         y_value = y_ramp.get_value(time)
         z_value = z_ramp.get_value(time)
@@ -475,7 +507,7 @@ class AtomCloud:
     def __init__(self, number_of_simulated_particles, number_of_real_particles):
         self.positions = np.zeros((number_of_simulated_particles, 3))
         self.momenta = np.zeros((number_of_simulated_particles, 3))
-        self.alpha = np.ones((number_of_simulated_particles, 3)) * (number_of_real_particles / number_of_simulated_particles)
+        self.alpha = np.ones(number_of_simulated_particles) * (number_of_real_particles / number_of_simulated_particles)
         
         self.particle_mass = 167.9323702 * scipy.constants.physical_constants['atomic mass unit-kilogram relationship'][0]
         
@@ -512,6 +544,9 @@ class AtomCloud:
         remaining_momenta = self.momenta[culling_mask]
         momenta_magnitude = np.linalg.norm(remaining_momenta, axis=1)
         return np.average(momenta_magnitude**2) / (3 * self.particle_mass * scipy.constants.k)
+    
+    def get_real_particle_number(self):
+        return np.sum(self.alpha)
     
     def get_Zeeman_shift_prefactor(self):
         return self.magneton * (self.mj_excited * self.lande_g_excited - self.mj_ground * self.lande_g_ground)
