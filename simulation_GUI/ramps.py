@@ -8,6 +8,38 @@ Created on Thu Jul 14 08:33:49 2022
 
 import numpy as np
 
+class Ramp:
+    def __init__(self):
+        self.ramp_segments = []
+        
+    def add_ramp_segment(self, ramp_segment):
+        self.ramp_segments.append(ramp_segment)
+        
+    # empty ramp returns 0 when asked for value
+    def get_value(self, time):
+        value = 0.0
+        for ramp_segment in self.ramp_segments:
+            if(ramp_segment.is_time_in_segment(time)):
+                value += ramp_segment.get_value(time)
+        return value
+
+class RampSegment:
+    def __init__(self):
+        self.start_time = 0
+        self.end_time = 0
+        self.ramp_type = None
+        self.start_value = 0
+        self.end_value = 0
+    
+    def is_time_in_segment(self, time):
+        if(time >= self.start_time and time <= self.end_time):
+            return True
+        else:
+            return False
+    
+    def get_value(self, time):
+        return self.ramp_type(time - self.start_time, self.end_time - self.start_time, self.start_value, self.end_value)
+
 def ConstantRamp(time, ramp_time, start_value, end_value):
     if time < 0:
         return 0

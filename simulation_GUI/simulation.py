@@ -7,21 +7,22 @@ Created on Sat Jun 25 15:17:24 2022
 import numpy as np
 import scipy.constants
 from numba import jit
-import ramps
+from ramps import Ramp, RampSegment
 
 # TODO - when initializing many of the objects initialize the ramps to something relevant to our experiment
 # i.e. dipolar beams to the appropriate waists etc.
-# TODO - add trap frequency calculation to the code
 # NOTE: we are actually in high field seeking state! U = -mu B and for electrons mu = -g * bohr * mj
 # so we have U = g * bohr * B_magnitude * mj and we have mj < 0 !!
 # TODO - have a way of choosing the box size in the gui - one will be manual and the other one will be based on main dipole beam - just chose waists (default 3)
 # TODO - add method into simulation itself to initialize box at a given number of beam waists/ rayleigh ranges
+# TODO - chache data in the field objects. Before each force calculation call a reset function that sets everything to 0. maybe have another variable called cahe time and then in the call for
+# the function ramp we can first check whether time is the cache time, if not then recalculate and cache! For that just define a cache method that does that.
 
 class Simulation:
     def __init__(self):
         self.atom_cloud = AtomCloud(100, 100)
         self.simulation_box = SimulationBox(Ramp(), np.ones(3))
-        self.gamma_box = 1.0 # fraction of mean free path used as box size
+        self.gamma_box = 1.0 # fraction of mean free path used as box sizes
         self.fields = []
         self.gravity = True
         
@@ -195,11 +196,15 @@ def ScatteringForce(MOT_intensity, detuning, B_field, position, momentum, P1, P2
 ##### SIMULATIONN BOX #####
 
 class SimulationBox:
-    def __init__(self, center_position_ramp = Ramp(), size):
-        self.center_position_ramp = center_position_ramp
-        # array of shape 3 storing the x, y and z box dimensions
+    ''' center position stores a vector pointing to the box center, 
+    size stores a vector of the form (length, width, height)'''
+    
+    def __init__(self, center_position, size):
+        self.center = center_position
         self.size = size
-
+        
+    def set_box_size(self, x_size, y_size, z_size):
+        self.size = np.array([x_size, y_size, z_size])
 
 ###### FIELDS ######
 
@@ -247,7 +252,8 @@ class ResonantBeam():
         self.wavelength = 582.84E-9                 # m
         self.saturation_intensity = 1.3             # W / m
         self.transition_linewidth = 2*np.pi*190*1E3 # rad /s
-        self.dipole_element_squared = self.transition_linewidth * 3 * np.pi * scipy.constants.epsilon_0 * scipy.constants.hbar * (self.wavelength / (2 * np.pi))**3
+        self.dipole_element_squared = self.transition_linewidth * 3 * np.pi * scipy.constants.epsilon_0 * \
+                                      scipy.constants.hbar * (self.wavelength / (2 * np.pi))**3
         
         
         
@@ -287,7 +293,7 @@ class DipoleField(Field):
     
     # experimental feature, needs a bit more thinking. Can do either analytical and assume harmonic potential
     # or can do some kind of hessian calculation
-    def calculate_trapping_frequencies():
+    def calculate_trapping_frequencies(self):
         omega_squared_total = np.zeros(3)
         for dipole_beam in self.dipole_beams:
             M_transform = dipole_beam.get_transformation_matrix()
@@ -306,12 +312,17 @@ class DipoleBeam():
         self.focus_ramp = focus_ramp
         self.theta_z = 0
         self.theta_x = 0
+        
+        # TODO - see if caching local positions and waists helps
+        ''' cached variables for faster computing '''
+        ''' NOTE: caching requires more memory!! '''
+        self.cache_time_intensity = None
+        self.intensity_cache = None
     
     def rotate_beam(self, theta_z, theta_x):
         self.theta_z = theta_z
         self.theta_x = theta_x
 
-    
     def reset_beam_rotation(self):
         self.theta_x = 0
         self.theta_z = 0
@@ -337,6 +348,8 @@ class DipoleBeam():
         return np.pi * (waist_0**2) / self.wavelength
     
     def calculate_beam_intensity(self, positions, time):
+        if self.cache_time_intensity == time:
+            return self.intensity_cache
         local_positions = self.convert_global_vectors_to_local(positions)
         rayleigh_range_y = self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time))
         rayleigh_range_z = self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time))
@@ -345,9 +358,11 @@ class DipoleBeam():
         waists_y = self.calculate_waist(self.waist_y_ramp.get_value(time), rayleigh_range_y, local_positions[:,0])
         waists_z = self.calculate_waist(self.waist_z_ramp.get_value(time), rayleigh_range_z, local_positions[:,0])
         
-        return self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (waists_y * waists_z)) * \
-               np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-               np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+        self.intensity_cache = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (waists_y * waists_z)) * \
+                               np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
+                               np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+        self.cache_time_intensity = time
+        return self.intensity_cache
     
     # the negative of the intensity gradient such that force is then F = alpha * (-grad I) since potential is U = alpha * I 
     # here alpha is the intensity prefactor equal to polarizability / (2 * c * epsilon0)

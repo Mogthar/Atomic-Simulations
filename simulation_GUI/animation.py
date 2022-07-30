@@ -9,7 +9,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tkinter as tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import asyncio
 
 class Animation:
     def __init__(self, canvas):
