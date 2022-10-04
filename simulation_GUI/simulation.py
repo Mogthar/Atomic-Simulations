@@ -9,14 +9,19 @@ import scipy.constants
 from numba import jit
 from ramps import Ramp, RampSegment
 
+# TODO - check detuning signs!
+# TODO - chache data in the field objects. Before each force calculation call a reset function that sets everything to 0. maybe have another variable called cahe time and then in the call for
+# the function ramp we can first check whether time is the cache time, if not then recalculate and cache! For that just define a cache method that does that.
+
 # TODO - when initializing many of the objects initialize the ramps to something relevant to our experiment
 # i.e. dipolar beams to the appropriate waists etc.
 # NOTE: we are actually in high field seeking state! U = -mu B and for electrons mu = -g * bohr * mj
 # so we have U = g * bohr * B_magnitude * mj and we have mj < 0 !!
 # TODO - have a way of choosing the box size in the gui - one will be manual and the other one will be based on main dipole beam - just chose waists (default 3)
 # TODO - add method into simulation itself to initialize box at a given number of beam waists/ rayleigh ranges
-# TODO - chache data in the field objects. Before each force calculation call a reset function that sets everything to 0. maybe have another variable called cahe time and then in the call for
-# the function ramp we can first check whether time is the cache time, if not then recalculate and cache! For that just define a cache method that does that.
+
+##### PERFORMANCE NOTES
+# NOTE is better with numpy arrays to use array = array + another array
 
 class Simulation:
     def __init__(self):
@@ -138,6 +143,7 @@ class Simulation:
                           np.power(self.atom_cloud.particle_mass / (2 * np.pi * scipy.constants.k * cloud_temperature), 3/2)
         return average_density
 
+'''
 @jit(nopython=True, parallel=True)
 def Forces(positions, P1, waist_y1, waist_z1, gravity, focal_position):
     force_odt1 = calc_force1(positions, waist_y1, waist_z1, P1, focal_position)
@@ -192,8 +198,9 @@ def ScatteringForce(MOT_intensity, detuning, B_field, position, momentum, P1, P2
         # so the depletion is not that strong and there are always atoms available
     
     return total_scattering_force, total_scattering_events
+'''
 
-##### SIMULATIONN BOX #####
+#%% SIMULATIONN BOX #####
 
 class SimulationBox:
     ''' center position stores a vector pointing to the box center, 
@@ -206,7 +213,7 @@ class SimulationBox:
     def set_box_size(self, x_size, y_size, z_size):
         self.size = np.array([x_size, y_size, z_size])
 
-###### FIELDS ######
+#%% FIELDS ######
 
 # TODO instead of positions and cloud separately just pass in the cloud? doesnt matter I guess
 class Field:
@@ -223,7 +230,7 @@ class Field:
         pass
     
     
-###### RESONANT FIELD ######
+#%% RESONANT FIELD
 
 class ResonantField(Field):
     def __init__(self):
@@ -250,18 +257,20 @@ class ResonantBeam():
         
         ''' constant parameters for a given transition '''
         self.wavelength = 582.84E-9                 # m
-        self.saturation_intensity = 1.3             # W / m
+        self.saturation_intensity = 1.3             # W / m**2
         self.transition_linewidth = 2*np.pi*190*1E3 # rad /s
         self.dipole_element_squared = self.transition_linewidth * 3 * np.pi * scipy.constants.epsilon_0 * \
                                       scipy.constants.hbar * (self.wavelength / (2 * np.pi))**3
+                                      
         
-        
-        
-        
+    #TODO implement detuning calculation (probably doppler)
+    #TODO implement scattering heating calculation
+    #TODO implement scattering force with the knowledge of detuning
+    #TODO check that the heating is correct
+    #TODO somehow implement saturation from other beams
         
     
-    
-####### DIPOLAR FIELD #######
+#%% DIPOLAR FIELD
     
 class DipoleField(Field):
     def __init__(self):
@@ -273,7 +282,7 @@ class DipoleField(Field):
     def calculate_force(self, positions, time, cloud):
         total_force = np.zeros(positions.shape)
         for dipole_beam in self.dipole_beams:
-            total_force += cloud.intensity_prefactor * dipole_beam.calculate_intensity_gradient(positions, time)
+            total_force = total_force + cloud.intensity_prefactor * dipole_beam.calculate_intensity_gradient(positions, time)
         return total_force
     
     # assume top level doesnt shift!
@@ -281,23 +290,23 @@ class DipoleField(Field):
     def calculate_detuning(self, positions, time, cloud):
         detuning = np.zeros(len(positions))
         for dipole_beam in self.dipole_beams:
-            detuning -= cloud.intensity_prefactor * dipole_beam.calculate_beam_intensity(positions, time)
+            detuning = detuning - cloud.intensity_prefactor * dipole_beam.calculate_beam_intensity(positions, time)
         return detuning
     
     def calcualte_scattering_heating(self, positions, time, delta_t, cloud):
         heating_momenta = np.zeros(positions.shape)
         for dipole_beam in self.dipole_beams:
             number_of_scattering_events = delta_t * cloud.scattering_rate * dipole_beam.calculate_beam_intensity(positions, time)
-            heating_momenta += dipole_beam.calculate_scattering_heating(number_of_scattering_events)
+            heating_momenta = heating_momenta + dipole_beam.calculate_scattering_heating(number_of_scattering_events)
         return heating_momenta
     
     # experimental feature, needs a bit more thinking. Can do either analytical and assume harmonic potential
     # or can do some kind of hessian calculation
-    def calculate_trapping_frequencies(self):
+    def calculate_trapping_frequencies(self, time, cloud):
         omega_squared_total = np.zeros(3)
         for dipole_beam in self.dipole_beams:
             M_transform = dipole_beam.get_transformation_matrix()
-            omega_squared_beam = dipole_beam.calculate_trapping_frequencies()**2
+            omega_squared_beam = dipole_beam.calculate_trapping_frequencies(time, cloud)**2
             omega_squared_total += np.matmul(M_transform**2, omega_squared_beam)
         
         return np.sqrt(omega_squared_total)            
@@ -310,6 +319,8 @@ class DipoleBeam():
         self.waist_y_ramp = waist_y_ramp
         self.waist_z_ramp = waist_z_ramp
         self.focus_ramp = focus_ramp
+        ''' The angles are defined such that the beam is first rotated by theta z about z
+            and then theta x about x'''
         self.theta_z = 0
         self.theta_x = 0
         
@@ -403,7 +414,7 @@ class DipoleBeam():
         random_phi = np.random.rand(len(number_of_scattering_events)) * 2 * np.pi
         random_theta = np.arccos(1 - 2 * np.random.rand(len(number_of_scattering_events)))
         random_heating_momenta = heating_momentum_magnitude.reshape((len(number_of_scattering_events),1)) * \
-                         np.stack((np.sin(random_theta)*np.sin(random_phi), np.sin(random_theta)*np.cos(random_phi), np.cos(random_theta)), axis=1)
+                                 np.stack((np.sin(random_theta)*np.sin(random_phi), np.sin(random_theta)*np.cos(random_phi), np.cos(random_theta)), axis=1)
         return random_heating_momenta
     
     def calculate_trapping_frequencies(self, time, cloud):
@@ -412,15 +423,47 @@ class DipoleBeam():
                            (np.power(self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time)),-2) + \
                             np.power(self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time)),-2))
                    
-        omega_y_squared = -(8 * self.intensity_prefactor * self.power_ramp.get_value(time)) / \
+        omega_y_squared = -(8 * cloud.intensity_prefactor * self.power_ramp.get_value(time)) / \
                            (np.pi * np.power(self.waist_y_ramp.get_value(time), 3) * self.waist_z_ramp.get_value(time) * cloud.particle_mass)
                            
-        omega_z_squared = -(8 * self.intensity_prefactor * self.power_ramp.get_value(time)) / \
+        omega_z_squared = -(8 * cloud.intensity_prefactor * self.power_ramp.get_value(time)) / \
                            (np.pi * np.power(self.waist_z_ramp.get_value(time), 3) * self.waist_y_ramp.get_value(time) * cloud.particle_mass)
     
         return np.sqrt(np.array([omega_x_squared, omega_y_squared, omega_z_squared]))
 
-###### MAGNETIC FIELD ######
+#%% MAGNETIC FIELD
+class UniformMagneticField:
+    # initialize with empty ramps
+    # empty ramp returns 0 when asked for value
+    def __init__(self, x_ramp = Ramp(), y_ramp = Ramp(), z_ramp = Ramp()):
+        self.x_ramp = x_ramp
+        self.y_ramp = y_ramp
+        self.z_ramp = z_ramp
+        
+    def calculate_field(self, positions, time):
+        x_value = self.x_ramp.get_value(time)
+        y_value = self.y_ramp.get_value(time)
+        z_value = self.z_ramp.get_value(time)
+        
+        field = np.array([[x_value, y_value, z_value]])
+        
+        return np.repeat(field, np.size(positions, axis = 0), axis = 0)
+    
+class GradientMagneticField:
+    def __init__(self, gradient_ramp = Ramp()):
+        self.gradient_ramp = gradient_ramp
+    
+    def calculate_field(self, positions, time):
+        x_pos = positions[:,0]
+        y_pos = positions[:,1]
+        z_pos = positions[:,2]
+        
+        gradient_value = self.gradient_ramp.get_value(time)
+        Bx = -gradient_value /2 * x_pos
+        By = -gradient_value /2 * y_pos
+        Bz =  gradient_value * z_pos
+        
+        return np.stack((Bx,By,Bz), axis=1)
     
 class MagneticField(Field):
     def __init__(self, uniform_field = UniformMagneticField(), gradient_field = GradientMagneticField()):
@@ -447,78 +490,10 @@ class MagneticField(Field):
     def calculate_scattering_heating(self, positions, time, cloud):
         return np.zeros(positions.shape)
     
-class UniformMagneticField:
-    # initialize with empty ramps
-    # empty ramp returns 0 when asked for value
-    def __init__(self, x_ramp = Ramp(), y_ramp = Ramp(), z_ramp = Ramp()):
-        self.x_ramp = x_ramp
-        self.y_ramp = y_ramp
-        self.z_ramp = z_ramp
-        
-    def calculate_field(self, positions, time):
-        x_value = x_ramp.get_value(time)
-        y_value = y_ramp.get_value(time)
-        z_value = z_ramp.get_value(time)
-        
-        field = np.array([[x_value, y_value, z_value]])
-        
-        return np.repeat(field, np.size(positions, axis = 0), axis = 0)
-    
-class GradientMagneticField:
-    def __init__(self, gradient_ramp = Ramp()):
-        self.gradient_ramp = gradient_ramp
-    
-    def calculate_field(self, positions, time):
-        x_pos = positions[:,0]
-        y_pos = positions[:,1]
-        z_pos = positions[:,2]
-        
-        gradient_value = self.gradient_ramp.get_value(time)
-        Bx = -gradient_value /2 * x
-        By = -gradient_value /2 * y
-        Bz =  gradient_value * z
-        
-        return np.stack((Bx,By,Bz), axis=1)
-
-####### RAMPS #######
-
-class Ramp:
-    def __init__(self):
-        self.ramp_segments = []
-        
-    def add_ramp_segment(self, ramp_segment):
-        self.ramp_segments.append(ramp_segment)
-        
-    # empty ramp returns 0 when asked for value
-    def get_value(self, time):
-        value = 0.0
-        for ramp_segment in self.ramp_segments:
-            if(ramp_segment.is_time_in_segment(time)):
-                value += ramp_segment.get_value(time)
-        return value
-
-class RampSegment:
-    def __init__(self):
-        self.start_time = 0
-        self.end_time = 0
-        self.ramp_type = None
-        self.start_value = 0
-        self.end_value = 0
-    
-    def is_time_in_segment(self, time):
-        if(time >= self.start_time and time <= self.end_time):
-            return True
-        else:
-            return False
-    
-    def get_value(self, time):
-        return self.ramp_type(time - self.start_time, self.end_time - self.start_time, self.start_value, self.end_value)
-    
-####### CLOUD ######
+#%% CLOUD
+# checked 3.10.2022
 
 class AtomCloud:
-    # try and initilize as many of these as possible so that we get no errors!
-    # 
     def __init__(self, number_of_simulated_particles, number_of_real_particles):
         self.positions = np.zeros((number_of_simulated_particles, 3))
         self.momenta = np.zeros((number_of_simulated_particles, 3))
@@ -532,7 +507,7 @@ class AtomCloud:
         self.mj_excited = -7
         self.magneton = scipy.constants.physical_constants['Bohr magneton'][0]
         
-        self.scatt_cross_section = 8 * np.pi * (150 * scipy.constants.physical_constants['atomic unit of length'][0])**2  # need to check this!!
+        self.scatt_cross_section = 8 * np.pi * (78 * scipy.constants.physical_constants['atomic unit of length'][0])**2  # need to check this!!
         self.polarizability = 2.9228099E-39
         self.intensity_prefactor = - self.polarizability / (2 * scipy.constants.epsilon_0 * scipy.constants.c)
         self.scattering_rate = 1.79341521457477E-10   # in units of s-1 per W/m2 i.e. multiply by intensity to get the real scattering rate
@@ -544,13 +519,14 @@ class AtomCloud:
                                                               size = (len(self.positions), 3))
     
     # initializes particles in a thermal equilibrium in a given potential using harmonic approximation     
-    def thermalize_positions(self, temperature, potential):
-        omega_x, omega_y, omega_z = potential.get_trap_frequencies()
-        omega_squared = np.array([omega_x**2, omega_y**2, omega_z**2])
+    #TODO check what potential is passed in here. most likely dipolar field
+    def thermalize_positions(self, temperature, dipole_field, time):
+        omega = dipole_field.calculate_trapping_frequencies(time, self)
         self.positions = np.random.normal(loc = 0.0, 
-                                          scale = np.sqrt(scipy.constants.k * temperature / (self.particle_mass * omega_squared)), 
+                                          scale = np.sqrt(scipy.constants.k * temperature / (self.particle_mass * (omega**2))), 
                                           size = (len(self.positions), 3))
         
+    #TODO check the definition of boudning box
     def calculate_cloud_temperature(self, bounding_box):
         # bounding box defined by center and size 
         culling_mask = np.logical_not(np.any((self.positions > (bounding_box.center + bounding_box.size / 2)) | 
@@ -560,6 +536,7 @@ class AtomCloud:
         momenta_magnitude = np.linalg.norm(remaining_momenta, axis=1)
         return np.average(momenta_magnitude**2) / (3 * self.particle_mass * scipy.constants.k)
     
+    ### utility functions 
     def get_real_particle_number(self):
         return np.sum(self.alpha)
     
