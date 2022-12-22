@@ -13,50 +13,97 @@ import numpy as np
 class Ramp:
     def __init__(self):
         self.ramp_segments = []
+        self.segment_times = []
         
     def add_ramp_segment(self, ramp_segment):
         self.ramp_segments.append(ramp_segment)
-        
-    # empty ramp returns 0 when asked for value
-    def get_value(self, time):
-        value = 0.0
-        for ramp_segment in self.ramp_segments:
-            if(ramp_segment.is_time_in_segment(time)):
-                value += ramp_segment.get_value(time)
-        return value
-
-class RampSegment:
-    def __init__(self):
-        self.start_time = 0
-        self.end_time = 0
-        self.ramp_type = None
-        self.start_value = 0
-        self.end_value = 0
-    
-    def is_time_in_segment(self, time):
-        if(time >= self.start_time and time <= self.end_time):
-            return True
+        if len(self.segment_times) > 0:
+            self.segment_times.append(self.segment_times[-1] + ramp_segment.length)
         else:
-            return False
+            self.segment_times.append(ramp_segment.length)
+
     
     def get_value(self, time):
-        return self.ramp_type(time - self.start_time, self.end_time - self.start_time, self.start_value, self.end_value)
+        # empty ramp returns 0 when asked for value
+        if len(self.ramp_segments) == 0:
+            return 0
+        else:
+            # negative times return initial value
+            if time < 0:
+                return self.ramp_segments[0].start_value
+            
+            # at his point we have some segments and the time is positive
+            for i, end_time in enumerate(self.segment_times):
+                if time < end_time:
+                    #special case of the first segment
+                    if i == 0:
+                        return self.ramp_segments[i].get_value(time)
+                    else:
+                        return self.ramp_segments[i].get_value(time - self.segment_times[i - 1])
+            
+            # if we are at the end of the ramp then we return end value of the last segment
+            return self.ramp_segments[-1].end_value
+    
+class RampSegment:
+    def __init__(self, start_value, end_value, length):
+        self.start_value = start_value
+        self.end_value = end_value
+        self.length = length
+    
+    def get_value(self, time):
+        pass
 
-def ConstantRamp(time, ramp_time, start_value, end_value):
-    if time < 0:
-        return 0
-    elif time >= 0 and time <= ramp_time:
-        return start_value
-    else:
-        return 0
+class ConstantSegment(RampSegment):
+    def __init__(self, start_value, end_value, length):
+        super(ConstantSegment, self).__init__(start_value, end_value, length)
+        assert (self.start_value == self.end_value)
+    
+    def get_value(self, time):
+        return self.start_value
 
-def LinearRamp(time, ramp_time, start_value, end_value):
-    if time < 0:
-        return 0
-    elif time >= 0 and time <= ramp_time:
-        return start_value + (end_value - start_value) * time / ramp_time
-    else:
-        return 0
+class LinearSegment(RampSegment):
+    def __init__(self, start_value, end_value, length):
+        super(LinearSegment, self).__init__(start_value, end_value, length)
+        self.slope = (self.end_value - self.start_value) / self.length
+    
+    def get_value(self, time):
+        return self.start_value + self.slope * time
+        
+
+class ExponentialSegment(RampSegment):
+    def __init__(self, start_value, end_value, length, tau):
+        super(ExponentialSegment, self).__init__(start_value, end_value, length)
+        self.tau = tau
+        self.A = (self.end_value -self.start_value * np.exp(-self.length/ self.tau)) / (1 - np.exp(-self.length / self.tau))
+        self.B = (self.end_value - self.start_value) / (np.exp(-self.length / self.tau) - 1)
+        
+    def get_value(self, time):
+        return self.A + self.B * np.exp(-time/self.tau)
+    
+
+#TODO possibly make these into modulation of a segment rather than its own segment (LOW)
+class GaussianNoiseSegment(RampSegment):
+    def __init__(self, start_value, end_value, length, stdev):
+        super(GaussianNoiseSegment, self).__init__(start_value, end_value, length)
+        assert (self.start_value == self.end_value)
+        self.stdev = stdev
+        
+    def get_value(self, time):
+        return self.start_value + np.random.normal(loc=0.0, scale=self.stdev)
+    
+class OscillationSegment(RampSegment):
+    def __init__(self, start_value, end_value, length, amplitude, frequency, phase):
+        super(GaussianNoiseSegment, self).__init__(start_value, end_value, length)
+        assert (self.start_value == self.end_value)
+        self.amplitude = amplitude
+        self.frequency = frequency
+        self.phase = phase
+    
+    def get_value(self, time):
+        return self.start_value + self.amplitude * np.sin(2 * np.pi * self.frequency * time + self.phase)
+
+
+### OBSOLETE (for now) ###
 
 def ConstAccRamp(time, ramp_time, start_value, end_value):
     ramp_distance = end_value - start_value
@@ -90,6 +137,3 @@ def ConstJerkRamp(time, ramp_time, start_value, end_value):
         return 16/3 * ramp_distance * ((time - ramp_time) / ramp_time)**3 + ramp_distance + start_value
     else:
         return 0
-    
-def ExponentialRamp(time, ramp_time, start_value, end_value):
-    return 0

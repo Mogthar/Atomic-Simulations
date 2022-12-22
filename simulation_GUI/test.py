@@ -4,11 +4,28 @@ Created on Mon Oct  3 14:29:11 2022
 
 @author: kucer
 """
-
+#%% imports
 import simulation as sim
 import numpy as np
 import plotting_utils as pltutils
 import ramps
+import matplotlib.pyplot as plt
+
+#%% test a ramp
+piecewise_ramp = ramps.Ramp()
+piecewise_ramp.add_ramp_segment(ramps.LinearSegment(4,3,1))
+piecewise_ramp.add_ramp_segment(ramps.ConstantSegment(3,3,2))
+piecewise_ramp.add_ramp_segment(ramps.LinearSegment(3,5,0.5))
+piecewise_ramp.add_ramp_segment(ramps.ExponentialSegment(5,2,3,-1))
+
+time = np.linspace(-2, 8, 100)
+values = np.zeros(len(time))
+for i, t in enumerate(time):
+    values[i] = piecewise_ramp.get_value(t)
+
+plt.scatter(time, values)
+plt.show()
+#%%
 
 cloud = sim.AtomCloud(10000, 1E6)
 

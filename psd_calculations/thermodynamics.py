@@ -136,9 +136,9 @@ def calculate_size_along_beam(beam, field, atom_cloud, gamma_cutoff = 10, epsilo
     target_energy = gamma_cutoff * scipy.constants.k * atom_cloud.T
     search_step_size = np.sqrt(2 * gamma_cutoff * scipy.constants.k * atom_cloud.T / atom_cloud.m) / beam.calculate_trapping_frequencies(atom_cloud.calculate_intensity_prefactor(), atom_cloud.m)
     
-    x_direction = potential_line_search(beam, field, atom_cloud, target_energy, search_step_size[0], search_direction = np.array([[1,0,0]]), epsilon)
-    y_direction = potential_line_search(beam, field, atom_cloud, target_energy, search_step_size[1], search_direction = np.array([[0,1,0]]), epsilon)
-    z_direction = potential_line_search(beam, field, atom_cloud, target_energy, search_step_size[2], search_direction = np.array([[0,0,1]]), epsilon)
+    x_direction = potential_line_search(beam, field, atom_cloud, target_energy, search_step_size[0], search_direction = np.array([[1,0,0]]), epsilon = epsilon)
+    y_direction = potential_line_search(beam, field, atom_cloud, target_energy, search_step_size[1], search_direction = np.array([[0,1,0]]), epsilon = epsilon)
+    z_direction = potential_line_search(beam, field, atom_cloud, target_energy, search_step_size[2], search_direction = np.array([[0,0,1]]), epsilon = epsilon)
     size = x_direction + y_direction + z_direction
     return size[0]
 

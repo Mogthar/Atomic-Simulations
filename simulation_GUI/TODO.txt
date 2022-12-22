@@ -1,0 +1,8 @@
+Redefine ramp objects
+
+check how odt fields are calculated
+
+Make MOT beams into Gaussians
+
+Code in Cross depletion of MOT (Milan's thesis)
+
