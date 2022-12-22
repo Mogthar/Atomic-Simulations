@@ -17,8 +17,9 @@ piecewise_ramp.add_ramp_segment(ramps.LinearSegment(4,3,1))
 piecewise_ramp.add_ramp_segment(ramps.ConstantSegment(3,3,2))
 piecewise_ramp.add_ramp_segment(ramps.LinearSegment(3,5,0.5))
 piecewise_ramp.add_ramp_segment(ramps.ExponentialSegment(5,2,3,-1))
+piecewise_ramp.add_ramp_segment(ramps.GaussianNoiseSegment(2,2,2,0.1))
 
-time = np.linspace(-2, 8, 100)
+time = np.linspace(-2, 9, 100)
 values = np.zeros(len(time))
 for i, t in enumerate(time):
     values[i] = piecewise_ramp.get_value(t)

@@ -6,20 +6,30 @@ Created on Thu Dec 22 09:47:42 2022
 """
 
 import numpy as np
+import scipy.constants
+from abc import ABC, abstractmethod
+import ramps
+
+#TODO think about caching
 
 # field can consist of several components (think laser beams or independent coils), each of which has their value determined by a ramp
-class Field:
+class Field(ABC):
     def __init__(self):
         pass
     
     # in general, any field can exert conservative force, change detuning of the energy levels or cause some heating 
+    @abstractmethod
     def calculate_force(self, positions, time, cloud):
         pass
     
+    # detuning is calculated as delta = w - w0 = w - E_high + E_low
+    # some fields shift only E_low, some fields shift both
+    @abstractmethod
     def calculate_detuning(self, positions, time, cloud):
         pass
     
-    def calcualte_scattering_heating(self, positions, time, delta_t, cloud):
+    @abstractmethod
+    def calculate_scattering_momenta(self, positions, time, delta_t, cloud):
         pass
     
     
@@ -34,11 +44,11 @@ class ResonantField(Field):
         
     def calculate_force(self, positions, time, cloud):
         pass
-        
+    
     def calculate_detuning(self, positions, time, cloud):
         return np.zeros(positions.shape)
     
-    def calculate_scattering_heating(self, positions, time, cloud):
+    def calculate_scattering_momenta(self, positions, time, delta_t, cloud):
         pass
     
 class ResonantBeam():
@@ -66,6 +76,7 @@ class ResonantBeam():
 #%% DIPOLAR FIELD
     
 class DipoleField(Field):
+    # dipolar field consists of dipole beams
     def __init__(self):
         self.dipole_beams = []
     
@@ -78,35 +89,35 @@ class DipoleField(Field):
             total_force = total_force + cloud.intensity_prefactor * dipole_beam.calculate_intensity_gradient(positions, time)
         return total_force
     
-    # assume top level doesnt shift!
-    # need to be careful with the sign!
+    # detuning is calculated as delta = w - w0 = w - E_high + E_low
+    # delE_high = 0 so we just add the change in the low level (which is negative)
     def calculate_detuning(self, positions, time, cloud):
         detuning = np.zeros(len(positions))
+        # bottom level shifts down so detuning is reduced
         for dipole_beam in self.dipole_beams:
-            detuning = detuning - cloud.intensity_prefactor * dipole_beam.calculate_beam_intensity(positions, time)
+            detuning = detuning + cloud.intensity_prefactor * dipole_beam.calculate_beam_intensity(positions, time)
         return detuning
     
-    def calcualte_scattering_heating(self, positions, time, delta_t, cloud):
-        heating_momenta = np.zeros(positions.shape)
+    def calcualte_scattering_momenta(self, positions, time, delta_t, cloud):
+        scattering_momenta = np.zeros(positions.shape)
         for dipole_beam in self.dipole_beams:
             number_of_scattering_events = delta_t * cloud.scattering_rate * dipole_beam.calculate_beam_intensity(positions, time)
-            heating_momenta = heating_momenta + dipole_beam.calculate_scattering_heating(number_of_scattering_events)
-        return heating_momenta
+            scattering_momenta = scattering_momenta + dipole_beam.calculate_scattering_momenta(number_of_scattering_events)
+        return scattering_momenta
     
-    # experimental feature, needs a bit more thinking. Can do either analytical and assume harmonic potential
-    # or can do some kind of hessian calculation
+    # approximated based on harmonic potential expansion at the bottom of the trap
     def calculate_trapping_frequencies(self, time, cloud):
-        omega_squared_total = np.zeros(3)
+        omega_tot_matrix = np.zeros((3,3))
         for dipole_beam in self.dipole_beams:
             M_transform = dipole_beam.get_transformation_matrix()
-            omega_squared_beam = dipole_beam.calculate_trapping_frequencies(time, cloud)**2
-            omega_squared_total += np.matmul(M_transform**2, omega_squared_beam)
-        
-        return np.sqrt(omega_squared_total)            
-    
-# TODO - add a way of changing the wavelength via the GUI
+            omega_squared = (dipole_beam.calculate_trapping_frequencies(time, cloud))**2
+            omega_matrix = np.diag(omega_squared)
+            omega_tot_matrix += np.linalg.multi_dot([M_transform, omega_matrix, np.transpose(M_transform)])
+        eigen_val, eigen_vec = np.linalg.eig(omega_tot_matrix)
+        return np.sqrt(eigen_val), eigen_vec            
+
 class DipoleBeam():
-    def __init__(self, power_ramp = Ramp(), waist_y_ramp = Ramp(), waist_z_ramp = Ramp(), focus_ramp = Ramp()):
+    def __init__(self, power_ramp, waist_y_ramp, waist_z_ramp, focus_ramp):
         self.wavelength = 1030E-9
         self.power_ramp = power_ramp
         self.waist_y_ramp = waist_y_ramp
@@ -116,20 +127,10 @@ class DipoleBeam():
             and then theta x about x'''
         self.theta_z = 0
         self.theta_x = 0
-        
-        # TODO - see if caching local positions and waists helps
-        ''' cached variables for faster computing '''
-        ''' NOTE: caching requires more memory!! '''
-        self.cache_time_intensity = None
-        self.intensity_cache = None
     
     def rotate_beam(self, theta_z, theta_x):
         self.theta_z = theta_z
         self.theta_x = theta_x
-
-    def reset_beam_rotation(self):
-        self.theta_x = 0
-        self.theta_z = 0
     
     def get_transformation_matrix(self):
         R_z = np.array([[np.cos(self.theta_z), -np.sin(self.theta_z), 0],[np.sin(self.theta_z), np.cos(self.theta_z), 0],[0,0,1]])
@@ -152,8 +153,6 @@ class DipoleBeam():
         return np.pi * (waist_0**2) / self.wavelength
     
     def calculate_beam_intensity(self, positions, time):
-        if self.cache_time_intensity == time:
-            return self.intensity_cache
         local_positions = self.convert_global_vectors_to_local(positions)
         rayleigh_range_y = self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time))
         rayleigh_range_z = self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time))
@@ -162,11 +161,11 @@ class DipoleBeam():
         waists_y = self.calculate_waist(self.waist_y_ramp.get_value(time), rayleigh_range_y, local_positions[:,0])
         waists_z = self.calculate_waist(self.waist_z_ramp.get_value(time), rayleigh_range_z, local_positions[:,0])
         
-        self.intensity_cache = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (waists_y * waists_z)) * \
-                               np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                               np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
-        self.cache_time_intensity = time
-        return self.intensity_cache
+        intensity = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (waists_y * waists_z)) * \
+                    np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
+                    np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+
+        return intensity
     
     # the negative of the intensity gradient such that force is then F = alpha * (-grad I) since potential is U = alpha * I 
     # here alpha is the intensity prefactor equal to polarizability / (2 * c * epsilon0)
@@ -180,16 +179,16 @@ class DipoleBeam():
         waists_z = self.calculate_waist(self.waist_z_ramp.get_value(time), rayleigh_range_z, local_positions[:,0])
         
         gradient_y = (8 * self.power_ramp.get_value(time) / np.pi) * local_positions[:,1] * (1 / waists_z) * np.power(waists_y, -3) * \
-                  np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                  np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+                      np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
+                      np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
         
         gradient_z = (8 * self.power_ramp.get_value(time) / np.pi) * local_positions[:,2] * (1 / waists_y) * np.power(waists_z, -3) * \
-                  np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                  np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+                      np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
+                      np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
         
         gradient_x = (2 * self.power_ramp.get_value(time) / np.pi) * local_positions[:,0] * (1 / (waists_y * waists_z)) * \
-                     np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                     np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2)) * \
+                      np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
+                      np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2)) * \
                      (np.power(self.waist_y_ramp.get_value(time) / (waists_y * rayleigh_range_y), 2) * (1 - np.power(2 * local_positions[:,1] / waists_y, 2)) + \
                      np.power(self.waist_z_ramp.get_value(time) / (waists_z * rayleigh_range_z), 2) * (1 - np.power(2 * local_positions[:,2] / waists_z, 2)))
         
@@ -199,16 +198,18 @@ class DipoleBeam():
         return self.convert_local_vectors_to_global(gradient_local)
         
     
-    def calculate_scattering_heating(self, number_of_scattering_events):
-        # its a biased (absorbtion) and random (emission) walk in momentum space with size of each step determined by momentum of scattered photon
-        # generally the scattering is slow so the "biased" part of the walk gets rethermalized anyway and we only treat the overall effect on mometum magnitude i.e. on the temperature (see notes) 
-        # based on this we calculate the magnitude of the heating momentum and we chose a random direction for it 
-        heating_momentum_magnitude = scipy.constants.hbar * (2 * np.pi / self.wavelength) * np.sqrt(number_of_scattering_events * (number_of_scattering_events + 1))
+    def calculate_scattering_momenta(self, number_of_scattering_events):
+        # impair momentum from photons along the beam and then from random re-emitted photons
+        photon_momentum = scipy.constants.hbar * (2 * np.pi / self.wavelength)
+        emission_momentum_magnitude =  photon_momentum * np.sqrt(number_of_scattering_events)
         random_phi = np.random.rand(len(number_of_scattering_events)) * 2 * np.pi
         random_theta = np.arccos(1 - 2 * np.random.rand(len(number_of_scattering_events)))
-        random_heating_momenta = heating_momentum_magnitude.reshape((len(number_of_scattering_events),1)) * \
-                                 np.stack((np.sin(random_theta)*np.sin(random_phi), np.sin(random_theta)*np.cos(random_phi), np.cos(random_theta)), axis=1)
-        return random_heating_momenta
+        emission_momenta = emission_momentum_magnitude.reshape((len(number_of_scattering_events),1)) * \
+                           np.stack((np.sin(random_theta)*np.sin(random_phi), np.sin(random_theta)*np.cos(random_phi), np.cos(random_theta)), axis=1)
+        # absorption happens in the positive x direction along the beam
+        absorption_direction = self.convert_local_vectors_to_global(np.array([1,0,0])) 
+        absorption_momenta = photon_momentum * number_of_scattering_events.reshape((len(number_of_scattering_events), 1)) * absorption_direction
+        return absorption_momenta + emission_momenta
     
     def calculate_trapping_frequencies(self, time, cloud):
         omega_x_squared = -(2 * cloud.intensity_prefactor * self.power_ramp.get_value(time)) / \
@@ -223,27 +224,27 @@ class DipoleBeam():
                            (np.pi * np.power(self.waist_z_ramp.get_value(time), 3) * self.waist_y_ramp.get_value(time) * cloud.particle_mass)
     
         return np.sqrt(np.array([omega_x_squared, omega_y_squared, omega_z_squared]))
+    
 
 #%% MAGNETIC FIELD
 class UniformMagneticField:
-    # initialize with empty ramps
-    # empty ramp returns 0 when asked for value
-    def __init__(self, x_ramp = Ramp(), y_ramp = Ramp(), z_ramp = Ramp()):
-        self.x_ramp = x_ramp
-        self.y_ramp = y_ramp
-        self.z_ramp = z_ramp
+    def __init__(self, Bx_ramp = ramps.Ramp(), By_ramp=ramps.Ramp(), Bz_ramp=ramps.Ramp()):
+        self.Bx_ramp = Bx_ramp
+        self.By_ramp = By_ramp
+        self.Bz_ramp = Bz_ramp
         
     def calculate_field(self, positions, time):
-        x_value = self.x_ramp.get_value(time)
-        y_value = self.y_ramp.get_value(time)
-        z_value = self.z_ramp.get_value(time)
+        Bx_value = self.Bx_ramp.get_value(time)
+        By_value = self.By_ramp.get_value(time)
+        Bz_value = self.Bz_ramp.get_value(time)
         
-        field = np.array([[x_value, y_value, z_value]])
+        field = np.array([[Bx_value, By_value, Bz_value]])
         
         return np.repeat(field, np.size(positions, axis = 0), axis = 0)
     
 class GradientMagneticField:
-    def __init__(self, gradient_ramp = Ramp()):
+    def __init__(self, gradient_ramp = ramps.Ramp()):
+        # needs to be in Tesla per meter!
         self.gradient_ramp = gradient_ramp
     
     def calculate_field(self, positions, time):
@@ -257,17 +258,19 @@ class GradientMagneticField:
         Bz =  gradient_value * z_pos
         
         return np.stack((Bx,By,Bz), axis=1)
-    
+
+# note that we are in the high field seeking state since mu > 0 and so U = - mu * mag(B) is minimized for maximal field
 class MagneticField(Field):
     def __init__(self, uniform_field = UniformMagneticField(), gradient_field = GradientMagneticField()):
         self.uniform_field = uniform_field
         self.gradient_field = gradient_field
     
-    # because of the order of operations can possibly chache the field magnitude
+    # detuning is delta = w - E_high + E_low
+    # E = - mu * mag(B)
     def calculate_detuning(self, positions, time, cloud):
         field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
         field_magnitude = np.sqrt((field * field).sum(axis = 1))
-        return cloud.get_Zeeman_shift_prefactor() * field_magnitude
+        return field_magnitude * (- cloud.get_ground_state_moment() + cloud.get_excited_state_moment())
         
     def calculate_force(self, positions, time, cloud):
         field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
@@ -275,10 +278,10 @@ class MagneticField(Field):
         gradient_value = self.gradient_field.gradient_ramp.get_value(time)
         
         magnitude_gradient_x = field[:,0] * (-gradient_value / 2) / field_magnitude
-        magnitude_gradient_y = field[:,0] * (-gradient_value / 2) / field_magnitude
-        magnitude_gradient_z = field[:,0] * (gradient_value) / field_magnitude
+        magnitude_gradient_y = field[:,1] * (-gradient_value / 2) / field_magnitude
+        magnitude_gradient_z = field[:,2] * (gradient_value) / field_magnitude
         
         return cloud.get_ground_state_moment() * np.stack((magnitude_gradient_x, magnitude_gradient_y, magnitude_gradient_z), axis=1)
         
-    def calculate_scattering_heating(self, positions, time, cloud):
+    def calculate_scattering_momenta(self, positions, time, cloud):
         return np.zeros(positions.shape)
