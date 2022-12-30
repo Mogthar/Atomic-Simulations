@@ -6,11 +6,15 @@ Created on Mon Oct  3 14:29:11 2022
 """
 #%% imports
 import simulation as sim
-import numpy as np
-import plotting_utils as pltutils
+import fields
 import ramps
+import numpy as np
 import matplotlib.pyplot as plt
 
+#%%
+position = np.array([[1,2,3],[2,2,80],[-1,4,1]])
+add = np.array([-1,-2,-3])
+print(position + add)
 #%% test a ramp
 piecewise_ramp = ramps.Ramp()
 piecewise_ramp.add_ramp_segment(ramps.LinearSegment(4,3,1))
@@ -26,43 +30,78 @@ for i, t in enumerate(time):
 
 plt.scatter(time, values)
 plt.show()
-#%%
 
-cloud = sim.AtomCloud(10000, 1E6)
+#%% test the simulation
+# setup a small atom cloud in a box
+atoms = sim.AtomCloud(10000, 10000)
+atoms.initialize_in_a_box(np.array([100E-6, 100E-6, 100E-6]))
+atoms.thermalize_momenta(10.0E-6)
 
-# initialize fields
-dipole_field = sim.DipoleField()
-dipole_beam_horizontal = sim.DipoleBeam()
-dipole_field.add_beam(dipole_beam_horizontal)
+#%% setup the sim itself
+simulation = sim.Simulation(atoms, "first_test")
+simulation.plotter.plot_2D_image(5E-6, 1, image_size = (100, 200)) ## magnification 2, pixel size 5E-6
 
-# define beam ramps
-start_time = -100
-end_time = 100
+#%% initialize fields
+no_ramp = ramps.Ramp()
 
-power_ramp_segment = ramps.RampSegment()
-power_ramp_segment.start_time = start_time
-power_ramp_segment.end_time = end_time
-power_ramp_segment.ramp_type = ramps.ConstantRamp
-power_ramp_segment.start_value = 12.0
-dipole_beam_horizontal.power_ramp.add_ramp_segment(power_ramp_segment) 
+#### B fields ####
+feshbach_ramp = ramps.Ramp()
+feshbach_ramp.add_ramp_segment(ramps.ConstantSegment(-1.16 * 2.03 * 1E-4, -1.16 * 2.03 * 1E-4, 100))
+B_uniform = fields.UniformMagneticField(Bx_ramp=no_ramp, By_ramp=no_ramp, Bz_ramp=feshbach_ramp)
 
-waisty_ramp_segment = ramps.RampSegment()
-waisty_ramp_segment.start_time = start_time
-waisty_ramp_segment.end_time = end_time
-waisty_ramp_segment.ramp_type = ramps.ConstantRamp
-waisty_ramp_segment.start_value = 24E-6
-dipole_beam_horizontal.waist_y_ramp.add_ramp_segment(waisty_ramp_segment)
+gradient_ramp = ramps.Ramp()
+gradient_ramp.add_ramp_segment(ramps.ConstantSegment(8.3 * 100 * 1E-4, 8.3 * 100 * 1E-4, 100))
+B_grad = fields.GradientMagneticField(gradient_ramp=gradient_ramp)
 
-waistz_ramp_segment = ramps.RampSegment()
-waistz_ramp_segment.start_time = start_time
-waistz_ramp_segment.end_time = end_time
-waistz_ramp_segment.ramp_type = ramps.ConstantRamp
-waistz_ramp_segment.start_value = 21E-6
-dipole_beam_horizontal.waist_z_ramp.add_ramp_segment(waistz_ramp_segment)
+B_field = fields.MagneticField(uniform_field=B_uniform, gradient_field=B_grad)
 
-# thermalize cloud
-T = 1E-6
-cloud.thermalize_momenta(T)
-cloud.thermalize_positions(T, dipole_field, 0.0)
+#### ODT beams ####
+P_odt1_ramp = ramps.Ramp()
+P_odt1_ramp.add_ramp_segment(ramps.ConstantSegment(16,16,100))
+wy_odt1_ramp = ramps.Ramp()
+wy_odt1_ramp.add_ramp_segment(ramps.ConstantSegment(25E-6,25E-6,100))
+wz_odt1_ramp = ramps.Ramp()
+wz_odt1_ramp.add_ramp_segment(ramps.ConstantSegment(25E-6,25E-6,100))
+focus_odt1_ramp = no_ramp
+ODT_1 = fields.DipoleBeam(P_odt1_ramp, wy_odt1_ramp, wz_odt1_ramp, focus_odt1_ramp)
 
-pltutils.xz_summed_image(cloud.positions, 5.8E-6, 1.944, image_size=(200, 200))
+dipole_field = fields.DipoleField()
+dipole_field.add_beam(ODT_1)
+
+#### MOT beams ####
+MOT_detuning_ramp = ramps.Ramp()
+MOT_detuning_ramp.add_ramp_segment(ramps.ConstantSegment(-2*np.pi*5.0E6, -2*np.pi*5.0E6, 100))
+
+MOT_power_ramp = ramps.Ramp()
+MOT_power_ramp.add_ramp_segment(ramps.ConstantSegment(20E-6, 20E-6, 100)) ## 40E-6
+
+MOT_beam_x_plus = fields.ResonantBeam(MOT_detuning_ramp, MOT_power_ramp, np.array([1,0,0]), polarisation=-1, waist=1E-2)
+MOT_beam_x_minus = fields.ResonantBeam(MOT_detuning_ramp, MOT_power_ramp, np.array([-1,0,0]), polarisation=-1, waist=1E-2)
+MOT_beam_y_plus = fields.ResonantBeam(MOT_detuning_ramp, MOT_power_ramp, np.array([0,1,0]), polarisation=-1, waist=1E-2)
+MOT_beam_y_minus = fields.ResonantBeam(MOT_detuning_ramp, MOT_power_ramp, np.array([0,-1,0]), polarisation=-1, waist=1E-2)
+MOT_beam_z_up = fields.ResonantBeam(MOT_detuning_ramp, MOT_power_ramp, np.array([0,0,1]), polarisation=1, waist=1E-2)
+MOT_beam_z_down = fields.ResonantBeam(MOT_detuning_ramp, MOT_power_ramp, np.array([0,0,-1]), polarisation=1, waist=1E-2)
+
+resonant_field = fields.ResonantField()
+resonant_field.add_beam(MOT_beam_x_minus)
+resonant_field.add_beam(MOT_beam_x_plus)
+resonant_field.add_beam(MOT_beam_y_minus)
+resonant_field.add_beam(MOT_beam_y_plus)
+resonant_field.add_beam(MOT_beam_z_down)
+resonant_field.add_beam(MOT_beam_z_up)
+
+#%% add fields to simulation and specify other sim parameters
+simulation.fields.append(B_field)
+simulation.fields.append(resonant_field)
+# simulation.fields.append(dipole_field)
+
+simulation.delta_t = 1E-6
+simulation.total_simulation_time = 100E-3
+
+simulation.sampling_delta_t = 1E-3
+simulation.plot_it = True
+
+simulation.gravity = True
+
+#%% run simulation
+simulation.run_simulation()

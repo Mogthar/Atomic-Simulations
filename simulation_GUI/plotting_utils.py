@@ -9,8 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # input image size in pixels
-def xz_summed_image(atomic_positions, real_pixel_size, magnification, image_size=(100,100)):
-    pixel_max = int(image_size/ 2)
+def xz_summed_image(atomic_positions, real_pixel_size, magnification, image_size=np.array([100,100])):
+    pixel_max = np.array([int(image_size[0] / 2), int(image_size[1] / 2)])
     x_coords = np.linspace(-pixel_max[0], pixel_max[0], 2 * pixel_max[0] + 1)
     y_coords = np.linspace(-pixel_max[1], pixel_max[1], 2 * pixel_max[1] + 1)
     x_grid, y_grid = np.meshgrid(x_coords, y_coords, indexing='ij')
@@ -19,7 +19,7 @@ def xz_summed_image(atomic_positions, real_pixel_size, magnification, image_size
     
     # assign positions to the nearest pixel
     apparent_pixel_size = real_pixel_size / magnification
-    twoD_pixel_positions = np.rint(atomic_positions[:,[0,2]] / pixel_size)
+    twoD_pixel_positions = np.rint(atomic_positions[:,[0,2]] / apparent_pixel_size)
 
     for pixel_position in twoD_pixel_positions:
         if np.all((pixel_position <= pixel_max) & (pixel_position >= -pixel_max)):

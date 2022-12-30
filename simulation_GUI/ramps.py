@@ -4,9 +4,6 @@ Created on Thu Jul 14 08:33:49 2022
 
 @author: kucer
 """
-# define ramps in the format: ramp(time, ramp_time, start_value, end_value)
-
-# TODO rather than checking all time segments have a pointer to current time segment - might be too hard
 
 import numpy as np
 

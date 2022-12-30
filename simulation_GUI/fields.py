@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 import ramps
 
 #TODO think about caching
+# TODO add gravity!!
+# TODO paralelization
 
 # field can consist of several components (think laser beams or independent coils), each of which has their value determined by a ramp
 class Field(ABC):
@@ -49,7 +51,7 @@ class ResonantField(Field):
     
     # resonant beams dont cause local detunings
     def calculate_detuning(self, positions, momenta, time, cloud):
-        return np.zeros(positions.shape)
+        return np.zeros(len(positions))
     
     def calculate_scattering_momenta(self, positions, momenta, B_field_direction, local_detunings, time, delta_t, cloud):
         # first calculate saturation parameters
@@ -60,7 +62,6 @@ class ResonantField(Field):
         combined_saturation = np.zeros(len(positions))
         for s in saturation_params:
             combined_saturation = combined_saturation + s
-        
         
         scattering_momenta = np.zeros(positions.shape)
         for i, resonant_beam in enumerate(self.resonant_beams):
@@ -93,7 +94,7 @@ class ResonantBeam():
         # need to find the radial distance from the center of the beam
         projection = np.dot(positions, self.beam_direction).reshape(len(positions), 1)
         radial_component = positions - projection * self.beam_direction
-        radial_distance = np.sqrt((radial_component * radial_component).sum(axis = 1))
+        radial_distance = np.sqrt(np.sum(radial_component * radial_component, axis = 1))
         
         intensity = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (self.waist)**2) * \
                     np.exp(- 2 * np.power(radial_distance, 2) / np.power(self.waist, 2))
@@ -146,10 +147,10 @@ class DipoleField(Field):
         detuning = np.zeros(len(positions))
         # bottom level shifts down so detuning is reduced
         for dipole_beam in self.dipole_beams:
-            detuning = detuning + cloud.intensity_prefactor * dipole_beam.calculate_beam_intensity(positions, time)
+            detuning = detuning + cloud.intensity_prefactor / scipy.constants.hbar * dipole_beam.calculate_beam_intensity(positions, time)
         return detuning
     
-    def calcualte_scattering_momenta(self, positions, momenta, B_field_direction, local_detunings, time, delta_t, cloud):
+    def calculate_scattering_momenta(self, positions, momenta, B_field_direction, local_detunings, time, delta_t, cloud):
         scattering_momenta = np.zeros(positions.shape)
         for dipole_beam in self.dipole_beams:
             number_of_scattering_events = delta_t * cloud.scattering_rate * dipole_beam.calculate_beam_intensity(positions, time)
@@ -178,6 +179,9 @@ class DipoleBeam():
             and then theta x about x'''
         self.theta_z = 0
         self.theta_x = 0
+        
+        self.cached_time = None
+        self.cached_intensity = None
     
     def rotate_beam(self, theta_z, theta_x):
         self.theta_z = theta_z
@@ -204,19 +208,22 @@ class DipoleBeam():
         return np.pi * (waist_0**2) / self.wavelength
     
     def calculate_beam_intensity(self, positions, time):
-        local_positions = self.convert_global_vectors_to_local(positions)
-        rayleigh_range_y = self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time))
-        rayleigh_range_z = self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time))
-        
-        # calculate the waists along the beam using the local x coordinate
-        waists_y = self.calculate_waist(self.waist_y_ramp.get_value(time), rayleigh_range_y, local_positions[:,0])
-        waists_z = self.calculate_waist(self.waist_z_ramp.get_value(time), rayleigh_range_z, local_positions[:,0])
-        
-        intensity = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (waists_y * waists_z)) * \
-                    np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                    np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
-
-        return intensity
+        if time == self.cached_time:
+            return self.cached_intensity
+        else:
+            self.cached_time = time
+            local_positions = self.convert_global_vectors_to_local(positions)
+            rayleigh_range_y = self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time))
+            rayleigh_range_z = self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time))
+            
+            # calculate the waists along the beam using the local x coordinate
+            waists_y = self.calculate_waist(self.waist_y_ramp.get_value(time), rayleigh_range_y, local_positions[:,0])
+            waists_z = self.calculate_waist(self.waist_z_ramp.get_value(time), rayleigh_range_z, local_positions[:,0])
+            
+            self.cached_intensity = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (waists_y * waists_z)) * \
+                                    np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
+                                    np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+            return self.cached_intensity
     
     # the negative of the intensity gradient such that force is then F = alpha * (-grad I) since potential is U = alpha * I 
     # here alpha is the intensity prefactor equal to polarizability / (2 * c * epsilon0)
@@ -291,7 +298,7 @@ class UniformMagneticField:
         
         field = np.array([[Bx_value, By_value, Bz_value]])
         
-        return np.repeat(field, np.size(positions, axis = 0), axis = 0)
+        return np.repeat(field, len(positions), axis = 0)
     
 class GradientMagneticField:
     def __init__(self, gradient_ramp = ramps.Ramp()):
@@ -299,40 +306,51 @@ class GradientMagneticField:
         self.gradient_ramp = gradient_ramp
     
     def calculate_field(self, positions, time):
-        x_pos = positions[:,0]
-        y_pos = positions[:,1]
-        z_pos = positions[:,2]
-        
         gradient_value = self.gradient_ramp.get_value(time)
-        Bx = -gradient_value /2 * x_pos
-        By = -gradient_value /2 * y_pos
-        Bz =  gradient_value * z_pos
-        
-        return np.stack((Bx,By,Bz), axis=1)
+        grad = np.array([-gradient_value / 2, -gradient_value / 2, gradient_value])
+        return grad * positions
 
 # note that we are in the high field seeking state since mu > 0 and so U = - mu * mag(B) is minimized for maximal field
 class MagneticField(Field):
     def __init__(self, uniform_field = UniformMagneticField(), gradient_field = GradientMagneticField()):
         self.uniform_field = uniform_field
         self.gradient_field = gradient_field
+        
+        # chaching
+        self.cache_time = None
+        self.cached_field = None
     
     # detuning is delta = w - E_high + E_low
     # E = - mu * mag(B)
     def calculate_detuning(self, positions, momenta, time, cloud):
-        field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
-        field_magnitude = np.sqrt((field * field).sum(axis = 1))
-        return field_magnitude * (- cloud.get_ground_state_moment() + cloud.get_excited_state_moment())
+        field_magnitude = self.calculate_field_magnitude(positions, time)
+        return (1 / scipy.constants.hbar) * field_magnitude * (- cloud.get_ground_state_moment() + cloud.get_excited_state_moment())
         
     def calculate_force(self, positions, time, cloud):
-        field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
-        field_magnitude = np.sqrt((field * field).sum(axis = 1))
         gradient_value = self.gradient_field.gradient_ramp.get_value(time)
-        
-        magnitude_gradient_x = field[:,0] * (-gradient_value / 2) / field_magnitude
-        magnitude_gradient_y = field[:,1] * (-gradient_value / 2) / field_magnitude
-        magnitude_gradient_z = field[:,2] * (gradient_value) / field_magnitude
-        
-        return cloud.get_ground_state_moment() * np.stack((magnitude_gradient_x, magnitude_gradient_y, magnitude_gradient_z), axis=1)
+        grad = np.array([-gradient_value / 2, -gradient_value / 2, gradient_value])
+        field_direction = self.calculate_field_direction(positions, time)
+        return cloud.get_ground_state_moment() * grad * field_direction
         
     def calculate_scattering_momenta(self, positions, momenta, B_field_direction, local_detunings, time, delta_t, cloud):
-        return np.zeros(positions.shape)
+        return np.zeros(momenta.shape)
+    
+    def calculate_field(self, positions, time):
+        if time == self.cache_time:
+            return self.cached_field
+        else:
+            self.cache_time = time    
+            self.cached_field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
+            return self.cached_field
+        
+    def calculate_field_direction(self, positions, time):
+        field = self.calculate_field(positions, time)
+        field_magnitude = self.calculate_field_magnitude(positions, time)
+        field_magnitude = field_magnitude.reshape(len(field), 1)
+        return field / field_magnitude
+    
+    # TODO cache?
+    def calculate_field_magnitude(self, positions, time):
+        field = self.calculate_field(positions, time)
+        return np.sqrt(np.sum(field * field, axis=1))
+        
