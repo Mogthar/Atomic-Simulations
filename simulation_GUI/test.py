@@ -10,11 +10,24 @@ import fields
 import ramps
 import numpy as np
 import matplotlib.pyplot as plt
+import numexpr as nex
+import time
+#%%
+def test_fun(a, b):
+    mult = nex.evaluate('a*b')
+    return nex.evaluate('sum(mult, axis=1)')
+
+def basic_fun(a):
+    M = np.array([[1,0,0],[2,4,-9],[-1,-3,4]])
+    return np.transpose(np.matmul(M, np.transpose(a)))
 
 #%%
-position = np.array([[1,2,3],[2,2,80],[-1,4,1]])
-add = np.array([-1,-2,-3])
-print(position + add)
+t1 = time.time()
+for i in range(100):
+    a = np.random.normal(loc=0.0, scale=1.0,size=(10000,3))
+    d = basic_fun(a)
+t2 = time.time()
+print(t2-t1)
 #%% test a ramp
 piecewise_ramp = ramps.Ramp()
 piecewise_ramp.add_ramp_segment(ramps.LinearSegment(4,3,1))
@@ -93,13 +106,13 @@ resonant_field.add_beam(MOT_beam_z_up)
 #%% add fields to simulation and specify other sim parameters
 simulation.fields.append(B_field)
 simulation.fields.append(resonant_field)
-# simulation.fields.append(dipole_field)
+simulation.fields.append(dipole_field)
 
 simulation.delta_t = 1E-6
-simulation.total_simulation_time = 100E-3
+simulation.total_simulation_time = 1E-3
 
 simulation.sampling_delta_t = 1E-3
-simulation.plot_it = True
+simulation.plot_it = False
 
 simulation.gravity = True
 

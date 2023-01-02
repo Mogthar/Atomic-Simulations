@@ -7,10 +7,11 @@ Created on Sat Jun 25 15:17:24 2022
 import numpy as np
 import scipy.constants
 from numba import jit
-from ramps import Ramp, RampSegment
+from ramps import Ramp
 import fields
 import os
 import plotting_utils as plutils
+import time
 
 
 #TODO - define plotter and saver classes 
@@ -22,6 +23,8 @@ import plotting_utils as plutils
 # TODO - implement scattering cross section as a function of B field in the cloud class
 # TODO - change plotter such that when it is defined it is given an image and pixel size
 # TODO - deal with box, masking etc
+# TODO - implement particle multiplication
+# TODO - implement particle collision
 
 ##### PERFORMANCE NOTES
 # NOTE is better with numpy arrays to use array = array + another array
@@ -123,6 +126,7 @@ class Simulation:
         # first calculate delta t
         self.recalculate_delta_t()
         
+        t_start = time.time()
         while(self.current_simulation_time < self.total_simulation_time):
             self.propagate()
             
@@ -144,7 +148,8 @@ class Simulation:
         
             # recalculate dt based on new trapping frequencies
             self.recalculate_delta_t()
-            
+        t_end = time.time()
+        print(t_end - t_start)
         
         self.data_sampler.save_final_info()
         
@@ -293,4 +298,4 @@ class AtomCloud:
     
     def get_excited_state_moment(self):
         return - self.magneton * self.lande_g_excited * self.mj_excited
-        
+    

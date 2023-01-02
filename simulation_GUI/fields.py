@@ -10,8 +10,6 @@ import scipy.constants
 from abc import ABC, abstractmethod
 import ramps
 
-#TODO think about caching
-# TODO add gravity!!
 # TODO paralelization
 
 # field can consist of several components (think laser beams or independent coils), each of which has their value determined by a ramp
@@ -55,14 +53,17 @@ class ResonantField(Field):
     
     def calculate_scattering_momenta(self, positions, momenta, B_field_direction, local_detunings, time, delta_t, cloud):
         # first calculate saturation parameters
+        # TODO can use parallelization here buthave to be careful about order of beams and things in the list. Maybe instead of list have an np array
         saturation_params = []
         for resonant_beam in self.resonant_beams:
             saturation_params.append(resonant_beam.calculate_saturation_parameter(positions, B_field_direction, time))
         
+        # TODO most likely not worth parallelizing 
         combined_saturation = np.zeros(len(positions))
         for s in saturation_params:
             combined_saturation = combined_saturation + s
         
+        # TODO suitable for parallelization. Maybe zip together saturaion params and beams
         scattering_momenta = np.zeros(positions.shape)
         for i, resonant_beam in enumerate(self.resonant_beams):
             s = saturation_params[i]
@@ -93,22 +94,21 @@ class ResonantBeam():
     def calculate_beam_intensity(self, positions, time):
         # need to find the radial distance from the center of the beam
         projection = np.dot(positions, self.beam_direction).reshape(len(positions), 1)
-        radial_component = positions - projection * self.beam_direction
-        radial_distance = np.sqrt(np.sum(radial_component * radial_component, axis = 1))
+        radial_distance = np.sqrt(np.sum(positions * positions, axis = 1) - np.sum(projection * projection, axis = 1))
         
         intensity = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (self.waist)**2) * \
-                    np.exp(- 2 * np.power(radial_distance, 2) / np.power(self.waist, 2))
+                    np.exp(- 2 / np.power(self.waist, 2) * np.power(radial_distance, 2))
         return intensity
     
     def calculate_scattering_momenta(self, number_of_scattering_events):
         # impair momentum from photons along the beam and then from random re-emitted photons
         photon_momentum = scipy.constants.hbar * (2 * np.pi / self.wavelength)
-        emission_momentum_magnitude =  photon_momentum * np.sqrt(number_of_scattering_events)
-        random_phi = np.random.rand(len(number_of_scattering_events)) * 2 * np.pi
-        random_theta = np.arccos(1 - 2 * np.random.rand(len(number_of_scattering_events)))
-        emission_momenta = emission_momentum_magnitude.reshape((len(number_of_scattering_events),1)) * \
+        N_events =  number_of_scattering_events.reshape(len(number_of_scattering_events),1)
+        random_phi = np.random.rand(len(N_events)) * 2 * np.pi
+        random_theta = np.arccos(1 - 2 * np.random.rand(len(N_events)))
+        emission_momenta = photon_momentum * np.sqrt(N_events) * \
                            np.stack((np.sin(random_theta)*np.sin(random_phi), np.sin(random_theta)*np.cos(random_phi), np.cos(random_theta)), axis=1)
-        absorption_momenta = photon_momentum * number_of_scattering_events.reshape((len(number_of_scattering_events), 1)) * self.beam_direction
+        absorption_momenta = photon_momentum * N_events * self.beam_direction
         return absorption_momenta + emission_momenta
     
     def calculate_doppler_detuning(self, velocities):
@@ -137,6 +137,7 @@ class DipoleField(Field):
     
     def calculate_force(self, positions, time, cloud):
         total_force = np.zeros(positions.shape)
+        # TODO possibly parallelize
         for dipole_beam in self.dipole_beams:
             total_force = total_force + cloud.intensity_prefactor * dipole_beam.calculate_intensity_gradient(positions, time)
         return total_force
@@ -145,13 +146,14 @@ class DipoleField(Field):
     # delE_high = 0 so we just add the change in the low level (which is negative)
     def calculate_detuning(self, positions, momenta, time, cloud):
         detuning = np.zeros(len(positions))
-        # bottom level shifts down so detuning is reduced
+        # TODO possibly parallelize
         for dipole_beam in self.dipole_beams:
             detuning = detuning + cloud.intensity_prefactor / scipy.constants.hbar * dipole_beam.calculate_beam_intensity(positions, time)
         return detuning
     
     def calculate_scattering_momenta(self, positions, momenta, B_field_direction, local_detunings, time, delta_t, cloud):
         scattering_momenta = np.zeros(positions.shape)
+        # TODO possibly parallelize
         for dipole_beam in self.dipole_beams:
             number_of_scattering_events = delta_t * cloud.scattering_rate * dipole_beam.calculate_beam_intensity(positions, time)
             scattering_momenta = scattering_momenta + dipole_beam.calculate_scattering_momenta(number_of_scattering_events)
@@ -166,7 +168,7 @@ class DipoleField(Field):
             omega_matrix = np.diag(omega_squared)
             omega_tot_matrix += np.linalg.multi_dot([M_transform, omega_matrix, np.transpose(M_transform)])
         eigen_val, eigen_vec = np.linalg.eig(omega_tot_matrix)
-        return np.sqrt(eigen_val), eigen_vec            
+        return np.sqrt(eigen_val), eigen_vec        
 
 class DipoleBeam():
     def __init__(self, power_ramp, waist_y_ramp, waist_z_ramp, focus_ramp):
@@ -201,54 +203,46 @@ class DipoleBeam():
         return np.transpose(np.matmul(M_transform, np.transpose(vectors)))
     
     ## decide whether the input should be time or waist?
+    # TODO cache?
     def calculate_waist(self, waist_0, z_rayleigh, x):
         return waist_0 * np.sqrt(1 + (x / z_rayleigh)**2)
     
     def calculate_rayleigh_range(self, waist_0):
         return np.pi * (waist_0**2) / self.wavelength
     
-    def calculate_beam_intensity(self, positions, time):
+    def calculate_beam_intensity(self, positions, time):        
         if time == self.cached_time:
             return self.cached_intensity
         else:
             self.cached_time = time
             local_positions = self.convert_global_vectors_to_local(positions)
-            rayleigh_range_y = self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time))
-            rayleigh_range_z = self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time))
+            waists = np.array([self.waist_y_ramp.get_value(time), self.waist_z_ramp.get_value(time)])
+            rayleigh_range_yz = self.calculate_rayleigh_range(waists)
             
             # calculate the waists along the beam using the local x coordinate
-            waists_y = self.calculate_waist(self.waist_y_ramp.get_value(time), rayleigh_range_y, local_positions[:,0])
-            waists_z = self.calculate_waist(self.waist_z_ramp.get_value(time), rayleigh_range_z, local_positions[:,0])
+            waists_yz = self.calculate_waist(waists, rayleigh_range_yz, np.stack((local_positions[:,0],local_positions[:,0]), axis=1))
             
-            self.cached_intensity = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / (waists_y * waists_z)) * \
-                                    np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                                    np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+            self.cached_intensity = self.power_ramp.get_value(time) * (2 / np.pi) * (1 / np.prod(waists_yz, axis=1)) * \
+                                    np.exp(-2 * np.sum(np.power(local_positions[:,1:] / waists_yz, 2), axis=1))
             return self.cached_intensity
     
     # the negative of the intensity gradient such that force is then F = alpha * (-grad I) since potential is U = alpha * I 
     # here alpha is the intensity prefactor equal to polarizability / (2 * c * epsilon0)
     def calculate_intensity_gradient(self, positions, time):
-        local_positions = self.convert_global_vectors_to_local(positions)
-        rayleigh_range_y = self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time))
-        rayleigh_range_z = self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time))
+        local_positions = self.convert_global_vectors_to_local(positions)        
+        waists = np.array([self.waist_y_ramp.get_value(time), self.waist_z_ramp.get_value(time)])
         
-        # calculate the waists along the beam using the local x coordinate
-        waists_y = self.calculate_waist(self.waist_y_ramp.get_value(time), rayleigh_range_y, local_positions[:,0])
-        waists_z = self.calculate_waist(self.waist_z_ramp.get_value(time), rayleigh_range_z, local_positions[:,0])
+        rayleigh_range_yz = self.calculate_rayleigh_range(waists)
+        waists_yz = self.calculate_waist(waists, rayleigh_range_yz, np.stack((local_positions[:,0],local_positions[:,0]), axis=1))
         
-        gradient_y = (8 * self.power_ramp.get_value(time) / np.pi) * local_positions[:,1] * (1 / waists_z) * np.power(waists_y, -3) * \
-                      np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                      np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+        intensity = self.calculate_beam_intensity(positions, time)
         
-        gradient_z = (8 * self.power_ramp.get_value(time) / np.pi) * local_positions[:,2] * (1 / waists_y) * np.power(waists_z, -3) * \
-                      np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                      np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2))
+        gradient_y = 4 * local_positions[:,1] * np.power(waists_yz[:,0], -2) * intensity
         
-        gradient_x = (2 * self.power_ramp.get_value(time) / np.pi) * local_positions[:,0] * (1 / (waists_y * waists_z)) * \
-                      np.exp(- 2 * np.power(local_positions[:,1], 2) / np.power(waists_y, 2)) * \
-                      np.exp(- 2 * np.power(local_positions[:,2], 2) / np.power(waists_z, 2)) * \
-                     (np.power(self.waist_y_ramp.get_value(time) / (waists_y * rayleigh_range_y), 2) * (1 - np.power(2 * local_positions[:,1] / waists_y, 2)) + \
-                     np.power(self.waist_z_ramp.get_value(time) / (waists_z * rayleigh_range_z), 2) * (1 - np.power(2 * local_positions[:,2] / waists_z, 2)))
+        gradient_z = 4 * local_positions[:,2] * np.power(waists_yz[:,1], -2) * intensity
+        
+        gradient_x =  local_positions[:,0] * intensity * \
+                      np.sum(np.power(waists / (waists_yz * rayleigh_range_yz), 2) * (1 - np.power(2 * local_positions[:,1:] / waists_yz, 2)), axis=1)
         
         # gradient vector in local coordinates
         gradient_local = np.stack((gradient_x, gradient_y, gradient_z), axis = 1)
@@ -259,27 +253,30 @@ class DipoleBeam():
     def calculate_scattering_momenta(self, number_of_scattering_events):
         # impair momentum from photons along the beam and then from random re-emitted photons
         photon_momentum = scipy.constants.hbar * (2 * np.pi / self.wavelength)
-        emission_momentum_magnitude =  photon_momentum * np.sqrt(number_of_scattering_events)
-        random_phi = np.random.rand(len(number_of_scattering_events)) * 2 * np.pi
-        random_theta = np.arccos(1 - 2 * np.random.rand(len(number_of_scattering_events)))
-        emission_momenta = emission_momentum_magnitude.reshape((len(number_of_scattering_events),1)) * \
+        N_events =  number_of_scattering_events.reshape(len(number_of_scattering_events),1)
+        random_phi = np.random.rand(len(N_events)) * 2 * np.pi
+        random_theta = np.arccos(1 - 2 * np.random.rand(len(N_events)))
+        emission_momenta = photon_momentum * np.sqrt(N_events) * \
                            np.stack((np.sin(random_theta)*np.sin(random_phi), np.sin(random_theta)*np.cos(random_phi), np.cos(random_theta)), axis=1)
         # absorption happens in the positive x direction along the beam
         absorption_direction = self.convert_local_vectors_to_global(np.array([1,0,0])) 
-        absorption_momenta = photon_momentum * number_of_scattering_events.reshape((len(number_of_scattering_events), 1)) * absorption_direction
+        absorption_momenta = photon_momentum * N_events * absorption_direction
         return absorption_momenta + emission_momenta
     
     def calculate_trapping_frequencies(self, time, cloud):
-        omega_x_squared = -(2 * cloud.intensity_prefactor * self.power_ramp.get_value(time)) / \
-                           (np.pi * cloud.particle_mass * self.waist_y_ramp.get_value(time) * self.waist_z_ramp.get_value(time)) * \
-                           (np.power(self.calculate_rayleigh_range(self.waist_y_ramp.get_value(time)),-2) + \
-                            np.power(self.calculate_rayleigh_range(self.waist_z_ramp.get_value(time)),-2))
+        power = self.power_ramp.get_value(time)
+        waists = np.array([self.waist_y_ramp.get_value(time), self.waist_z_ramp.get_value(time)])
+        
+        omega_x_squared = -(2 * cloud.intensity_prefactor * power) / \
+                           (np.pi * cloud.particle_mass * waists[0] * waists[1]) * \
+                           (np.power(self.calculate_rayleigh_range(waists[0]),-2) + \
+                            np.power(self.calculate_rayleigh_range(waists[1]),-2))
                    
-        omega_y_squared = -(8 * cloud.intensity_prefactor * self.power_ramp.get_value(time)) / \
-                           (np.pi * np.power(self.waist_y_ramp.get_value(time), 3) * self.waist_z_ramp.get_value(time) * cloud.particle_mass)
+        omega_y_squared = -(8 * cloud.intensity_prefactor * power) / \
+                           (np.pi * np.power(waists[0], 3) * waists[1] * cloud.particle_mass)
                            
-        omega_z_squared = -(8 * cloud.intensity_prefactor * self.power_ramp.get_value(time)) / \
-                           (np.pi * np.power(self.waist_z_ramp.get_value(time), 3) * self.waist_y_ramp.get_value(time) * cloud.particle_mass)
+        omega_z_squared = -(8 * cloud.intensity_prefactor * power) / \
+                           (np.pi * np.power(waists[1], 3) * waists[0] * cloud.particle_mass)
     
         return np.sqrt(np.array([omega_x_squared, omega_y_squared, omega_z_squared]))
     
@@ -324,7 +321,7 @@ class MagneticField(Field):
     # E = - mu * mag(B)
     def calculate_detuning(self, positions, momenta, time, cloud):
         field_magnitude = self.calculate_field_magnitude(positions, time)
-        return (1 / scipy.constants.hbar) * field_magnitude * (- cloud.get_ground_state_moment() + cloud.get_excited_state_moment())
+        return (1 / scipy.constants.hbar) * (- cloud.get_ground_state_moment() + cloud.get_excited_state_moment()) * field_magnitude
         
     def calculate_force(self, positions, time, cloud):
         gradient_value = self.gradient_field.gradient_ramp.get_value(time)
@@ -342,7 +339,7 @@ class MagneticField(Field):
             self.cache_time = time    
             self.cached_field = self.uniform_field.calculate_field(positions, time) + self.gradient_field.calculate_field(positions, time)
             return self.cached_field
-        
+
     def calculate_field_direction(self, positions, time):
         field = self.calculate_field(positions, time)
         field_magnitude = self.calculate_field_magnitude(positions, time)
@@ -354,3 +351,4 @@ class MagneticField(Field):
         field = self.calculate_field(positions, time)
         return np.sqrt(np.sum(field * field, axis=1))
         
+# TODO NOTE: tested all functions for 10k simulated atoms and no speed up with numexpr was possible

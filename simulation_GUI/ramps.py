@@ -12,6 +12,9 @@ class Ramp:
         self.ramp_segments = []
         self.segment_times = []
         
+        self.cache_time = None
+        self.cache_value = None
+        
     def add_ramp_segment(self, ramp_segment):
         self.ramp_segments.append(ramp_segment)
         if len(self.segment_times) > 0:
@@ -21,25 +24,34 @@ class Ramp:
 
     
     def get_value(self, time):
-        # empty ramp returns 0 when asked for value
-        if len(self.ramp_segments) == 0:
-            return 0
+        if time == self.cache_time:
+            return self.cache_value
         else:
-            # negative times return initial value
-            if time < 0:
-                return self.ramp_segments[0].start_value
-            
-            # at his point we have some segments and the time is positive
-            for i, end_time in enumerate(self.segment_times):
-                if time < end_time:
-                    #special case of the first segment
-                    if i == 0:
-                        return self.ramp_segments[i].get_value(time)
-                    else:
-                        return self.ramp_segments[i].get_value(time - self.segment_times[i - 1])
-            
-            # if we are at the end of the ramp then we return end value of the last segment
-            return self.ramp_segments[-1].end_value
+            self.cache_time = time
+            # empty ramp returns 0 when asked for value
+            if len(self.ramp_segments) == 0:
+                self.cache_value = 0
+                return self.cache_value
+            else:
+                # negative times return initial value
+                if time < 0:
+                    self.cache_value = self.ramp_segments[0].start_value
+                    return self.cache_value
+                
+                # at his point we have some segments and the time is positive
+                for i, end_time in enumerate(self.segment_times):
+                    if time < end_time:
+                        #special case of the first segment
+                        if i == 0:
+                            self.cache_value = self.ramp_segments[i].get_value(time)
+                            return self.cache_value
+                        else:
+                            self.cache_value = self.ramp_segments[i].get_value(time - self.segment_times[i - 1])
+                            return self.cache_value
+                
+                # if we are at the end of the ramp then we return end value of the last segment
+                self.cache_value = self.ramp_segments[-1].end_value
+                return self.cache_value
     
 class RampSegment:
     def __init__(self, start_value, end_value, length):
