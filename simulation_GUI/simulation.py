@@ -14,36 +14,36 @@ import plotting_utils as plutils
 import time
 
 
-#TODO - define plotter and saver classes 
-# TODO - parallelisation
-# TODO - stats -define a separate file with class and simulation
+# TODO XX - parallelisation
+# TODO X - stats -define a separate file with class and simulation
+# TODO - add method into simulation itself to initialize box at a given number of beam waists/ rayleigh ranges
+# TODO X - implement scattering cross section as a function of B field in the cloud class
+# TODO - deal with box, masking etc - so far box is static in size and the cell size is initially hard coded until first density calc is done
+# TODO - implement particle multiplication
+
+# TODO - chytristika about cell size if no density info and about box size
+
+##### NOTES
+# NOTE: its better with numpy arrays to use array = array + another array
 # NOTE: we are actually in high field seeking state! U = -mu B and for electrons mu = -g * bohr * mj
 # so we have U = g * bohr * B_magnitude * mj and we have mj < 0 !!
-# TODO - add method into simulation itself to initialize box at a given number of beam waists/ rayleigh ranges
-# TODO - implement scattering cross section as a function of B field in the cloud class
-# TODO - change plotter such that when it is defined it is given an image and pixel size
-# TODO - deal with box, masking etc
-# TODO - implement particle multiplication
-# TODO - implement particle collision
-
-##### PERFORMANCE NOTES
-# NOTE is better with numpy arrays to use array = array + another array
 
 class Simulation:
     def __init__(self, atom_cloud, simulation_name):
         self.atom_cloud = atom_cloud
         # initialize with simple simulation box
         self.simulation_box = SimulationBox(Ramp(), np.ones(3))
-        self.gamma_cell = 1.0 # fraction of mean free path used as box sizes
+        self.gamma_cell = 1.0 # fraction of mean free path used as cell sizes
         self.fields = []
         self.gravity = True
         
         ''' time related parameters'''
         self.delta_t = 1E-6
-        self.gamma_t_oscillation = 1E-3
+        self.gamma_t_oscillation = 1E-2
         self.gamma_t_collision = 0.1
         self.sampling_delta_t = 1E-3
         self.collision_delta_t = 1E-3
+        self.collisions_on = False
         
         self.total_simulation_time = 100E-3
         self.current_simulation_time = 0.0
@@ -54,8 +54,7 @@ class Simulation:
         self.plotter = Plotter(self)
         self.plot_it = False
     
-    # TODO - need to be careful about the order of things here. How does scattering momentum play in? 
-    # since its a non-conservative foce I will leave it out of the verlet algorithm
+    # since scattering is non-conservative foce I will leave it out of the verlet algorithm and add it at the end
     def propagate(self):
         old_forces = self.calculate_forces(self.atom_cloud.positions, self.current_simulation_time)
     
@@ -70,12 +69,14 @@ class Simulation:
         # calculate necessary quantites for the non-conservative scattering force
         scattering_momenta = np.zeros(self.atom_cloud.positions.shape)
         detunings = np.zeros(len(self.atom_cloud.positions))
-        B_field_directions = np.zeros(self.atom_cloud.positions.shape)       
+        B_field_directions = np.zeros(self.atom_cloud.positions.shape) 
+        # TODO parallelize
         for field in self.fields:
             detunings = detunings + \
                         field.calculate_detuning(self.atom_cloud.positions, self.atom_cloud.momenta, self.current_simulation_time, self.atom_cloud)
             if isinstance(field, fields.MagneticField):
                 B_field_directions = field.calculate_field_direction(self.atom_cloud.positions, self.current_simulation_time)
+        # TODO parallelize
         for field in self.fields:
             scattering_momenta = scattering_momenta + \
                                  field.calculate_scattering_momenta(self.atom_cloud.positions, self.atom_cloud.momenta, 
@@ -87,6 +88,7 @@ class Simulation:
     
     def calculate_forces(self, positions, time):
         forces = np.zeros(positions.shape)
+        # TODO parallelize
         for field in self.fields:
             forces = forces + field.calculate_force(positions, time, self.atom_cloud)
         if self.gravity:
@@ -94,8 +96,100 @@ class Simulation:
             forces = forces + grav_force
         return forces
     
-    def collide_particles(self):
-        return
+    def assign_particles_to_cells(self, positions, time, cell_size):
+        center_position = self.simulation_box.get_center_position(time)
+        box_size = self.simulation_box.size
+        cell_numbers = np.ceil(box_size / cell_size).astype('int64')
+        
+        indices = np.floor(((positions - center_position) + box_size / 2) / cell_size)
+        is_out_of_box = np.full(len(indices), False)
+        for i in range(len(is_out_of_box)):
+            is_out_of_box[i] = np.any((indices[i] > (cell_numbers -1)) | (indices[i] < 0))
+        cell_id = indices[:,2] * cell_numbers[0] * cell_numbers[1] + indices[:,1] * cell_numbers[1] + indices[:,0]
+        cell_id[is_out_of_box] = -1
+        return cell_id
+    
+    def collide_particles(self, positions, momenta, time, delta_t, cloud):
+        # figure out cell size
+        cell_size = 0.0
+        if cloud.average_density != None:
+            mean_free_path = 1 / (cloud.average_density * cloud.scatt_cross_section)
+            cell_size = mean_free_path * self.gamma_cell
+        else:
+            #TODO
+            cell_size = 1.0E-5
+        
+        indices = self.assign_particles_to_cells(positions, time, cell_size)
+        # combine momenta and positions into one array
+        combined_pos_mom_array = np.concatenate((positions,momenta), axis=1)
+        average_density = 0
+        N_particles_trapped = 0
+        new_momenta = np.array([])
+        new_positions = np.array([])
+        
+        # create cell dictionary
+        # TODO parallelize
+        cell_dictionary = {}
+        for i, index in enumerate(indices):
+            if index in cell_dictionary:
+                cell_dictionary[index] = np.append(cell_dictionary[index], 
+                                                        combined_pos_mom_array[i].reshape(1,6), axis=0)
+            else:
+                cell_dictionary[index] = combined_pos_mom_array[i].reshape(1,6)
+        
+        
+        # perform operations on the dictionary
+        #TODO parallelize
+        # TODO right now a single particle can collide multiple times 
+        probability_prefactor = cloud.alpha * delta_t * cloud.scatt_cross_section / (cell_size**3)
+        for cell_index in cell_dictionary:
+            momenta_in_cell = cell_dictionary[cell_index][:,3:]
+            positions_in_cell = cell_dictionary[cell_index][:,:3]
+            N_part_cell = len(positions_in_cell)
+            if cell_index != -1:
+                # TODO make this into a method
+                average_density += (N_part_cell * cloud.alpha)**2
+                N_particles_trapped += N_part_cell
+                if N_part_cell > 1:
+                    particle_labels = np.linspace(0, N_part_cell, N_part_cell, endpoint=False, dtype=int)
+    
+                    ### calculate the numnber of test collisions, the normalization i.e. max relative velocity and then test the particles
+                    max_v_rel = 2 * np.amax(np.linalg.norm(momenta_in_cell / cloud.particle_mass, axis=1))
+                    N_pairs = N_part_cell * (N_part_cell - 1) / 2
+                    N_test_collisions = np.ceil(N_pairs * probability_prefactor * max_v_rel).astype('int')
+                    
+                    # try N collisions
+                    for i in range(N_test_collisions):
+                        pair_choice = np.random.choice(particle_labels, size = 2, replace = False)
+                        pair_momenta = momenta_in_cell[pair_choice]
+                        relative_speed = np.linalg.norm((pair_momenta[0] - pair_momenta[1]) / cloud.particle_mass)
+                        ## test the collision ##
+                        collision_probability = N_pairs * (probability_prefactor * relative_speed) / N_test_collisions
+                        if  np.random.rand() < collision_probability:
+                            momentum_com = (pair_momenta[0] + pair_momenta[1]) / 2
+                            momentum_relative = pair_momenta[0] - pair_momenta[1]
+                            momentum_relative_mag = np.sqrt(np.sum(momentum_relative**2))
+                            
+                            rand_theta = np.arccos(2 * np.random.rand() - 1)
+                            rand_phi = np.random.rand() * 2 * np.pi
+                            c = momentum_relative_mag * np.array([np.sin(rand_theta) * np.cos(rand_phi), 
+                                                           np.sin(rand_theta) * np.sin(rand_phi), 
+                                                           np.cos(rand_theta)])
+                            # calc new momenta
+                            pair_momenta[0] = momentum_com + 0.5 * c
+                            pair_momenta[1] = momentum_com - 0.5 * c
+                            # update momenta in cell with new momenta
+                            momenta_in_cell[pair_choice] = pair_momenta
+                            # particle_labels = particle_labels[(particle_labels != pair_choice[0]) & (particle_labels != pair_choice[1])]
+                
+                # only add new momenta if particles are in the region of interest
+                new_momenta = np.append(new_momenta, momenta_in_cell)
+                new_positions = np.append(new_positions, positions_in_cell)
+        
+        new_momenta = np.reshape(new_momenta, (N_particles_trapped, 3))
+        new_positions = np.reshape(new_positions, (N_particles_trapped, 3))
+        average_density *= (1 / (N_particles_trapped * cloud.alpha* (cell_size**3)))
+        return new_positions, new_momenta, average_density
     
     # TODO add collision based dt
     def recalculate_delta_t(self):
@@ -105,20 +199,7 @@ class Simulation:
                 trappinq_freq, _ = field.calculate_trapping_frequencies(self.current_simulation_time, self.atom_cloud)
                 maximum_trapping_frequency = np.amax(trappinq_freq)
                 oscillation_dt = self.gamma_t_oscillation * 2 * np.pi / maximum_trapping_frequency
-        self.delta_t = oscillation_dt
-    
-    def sample_trajectory(self, file):
-        # sample positons, particle number, temperature, time
-        return
-    
-    def save_final_configuration(self, file):
-        # save final positions and momenta
-        return 
-    
-    def save_simulation_settings(self, file):
-        # save simulation settings
-        # this should include all the ramp info etc
-        return
+        self.delta_t = min(oscillation_dt, self.collision_delta_t)
     
     def run_simulation(self):
         sampling_timer = 0.0
@@ -130,24 +211,33 @@ class Simulation:
         while(self.current_simulation_time < self.total_simulation_time):
             self.propagate()
             
-            self.current_simulation_time += self.delta_t
             sampling_timer += self.delta_t
             collision_timer += self.delta_t
             
             if collision_timer > self.collision_delta_t:
-                self.collide_particles()
                 collision_timer -= self.collision_delta_t
-            
+                # collide and recalculate dt_coll
+                if self.collisions_on:
+                    self.atom_cloud.positions, self.atom_cloud.momenta, self.atom_cloud.average_density = self.collide_particles(self.atom_cloud.positions, self.atom_cloud.momenta, self.current_simulation_time, self.delta_t, self.atom_cloud)
+                    
+                    avg_rel_speed = np.sqrt(16 * scipy.constants.k * \
+                                            self.atom_cloud.calculate_cloud_temperature(self.simulation_box, self.current_simulation_time) / \
+                                            (np.pi * self.atom_cloud.particle_mass))
+                    mean_collision_time = 1 / (avg_rel_speed * self.atom_cloud.average_density * self.atom_cloud.scatt_cross_section)
+                    self.collision_delta_t = self.gamma_t_collision * mean_collision_time
+                    print(self.collision_delta_t, self.delta_t)
+
             if sampling_timer > self.sampling_delta_t:
                 self.data_sampler.sample_data()
                 sampling_timer -= self.sampling_delta_t
                 print(100 * self.current_simulation_time / self.total_simulation_time)
-                print(self.atom_cloud.calculate_cloud_temperature(self.simulation_box, self.current_simulation_time))
                 if self.plot_it:
                     self.plotter.plot_2D_image(5E-6, 2, image_size = (200, 200))
         
-            # recalculate dt based on new trapping frequencies
+            # increment total time by dt and then recalculate dt
+            self.current_simulation_time += self.delta_t
             self.recalculate_delta_t()
+        
         t_end = time.time()
         print(t_end - t_start)
         
@@ -249,7 +339,8 @@ class AtomCloud:
     def __init__(self, number_of_simulated_particles, number_of_real_particles):
         self.positions = np.zeros((number_of_simulated_particles, 3))
         self.momenta = np.zeros((number_of_simulated_particles, 3))
-        self.alpha = np.ones(number_of_simulated_particles) * (number_of_real_particles / number_of_simulated_particles)
+        self.alpha = (number_of_real_particles / number_of_simulated_particles)
+        self.average_density = None
         
         self.particle_mass = 167.9323702 * scipy.constants.physical_constants['atomic mass unit-kilogram relationship'][0]
         
@@ -273,7 +364,7 @@ class AtomCloud:
     
     # initializes particles in a thermal equilibrium in a given potential using harmonic approximation     
     def thermalize_positions(self, temperature, dipole_field, time):
-        omega = dipole_field.calculate_trapping_frequencies(time, self)
+        omega, _ = dipole_field.calculate_trapping_frequencies(time, self)
         self.positions = np.random.normal(loc = 0.0, 
                                           scale = np.sqrt(scipy.constants.k * temperature / (self.particle_mass * (omega**2))), 
                                           size = (len(self.positions), 3))
@@ -289,9 +380,16 @@ class AtomCloud:
         momenta_magnitude = np.linalg.norm(remaining_momenta, axis=1)
         return np.average(momenta_magnitude**2) / (3 * self.particle_mass * scipy.constants.k)
     
+    def approximate_cloud_center(self):
+        return np.median(self.positions, axis = 0)
+        
+    def filter_escaped_particles(self, scale = 10):
+        pass
+        
     ### utility functions 
+    # TODO somehow filter particles beforehand so that we dont count the untrapped particles
     def get_real_particle_number(self):
-        return np.sum(self.alpha)
+        return self.alpha * len(self.positions)
     
     def get_ground_state_moment(self):
         return - self.magneton * self.lande_g_ground * self.mj_ground

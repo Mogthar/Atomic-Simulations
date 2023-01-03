@@ -10,24 +10,7 @@ import fields
 import ramps
 import numpy as np
 import matplotlib.pyplot as plt
-import numexpr as nex
-import time
-#%%
-def test_fun(a, b):
-    mult = nex.evaluate('a*b')
-    return nex.evaluate('sum(mult, axis=1)')
 
-def basic_fun(a):
-    M = np.array([[1,0,0],[2,4,-9],[-1,-3,4]])
-    return np.transpose(np.matmul(M, np.transpose(a)))
-
-#%%
-t1 = time.time()
-for i in range(100):
-    a = np.random.normal(loc=0.0, scale=1.0,size=(10000,3))
-    d = basic_fun(a)
-t2 = time.time()
-print(t2-t1)
 #%% test a ramp
 piecewise_ramp = ramps.Ramp()
 piecewise_ramp.add_ramp_segment(ramps.LinearSegment(4,3,1))
@@ -46,7 +29,7 @@ plt.show()
 
 #%% test the simulation
 # setup a small atom cloud in a box
-atoms = sim.AtomCloud(10000, 10000)
+atoms = sim.AtomCloud(10000, 10000000)
 atoms.initialize_in_a_box(np.array([100E-6, 100E-6, 100E-6]))
 atoms.thermalize_momenta(10.0E-6)
 
@@ -109,12 +92,15 @@ simulation.fields.append(resonant_field)
 simulation.fields.append(dipole_field)
 
 simulation.delta_t = 1E-6
-simulation.total_simulation_time = 1E-3
+simulation.total_simulation_time = 5E-3
 
 simulation.sampling_delta_t = 1E-3
-simulation.plot_it = False
+simulation.plot_it = True
 
 simulation.gravity = True
+
+simulation.collisions_on = True
+simulation.simulation_box = sim.SimulationBox(ramps.Ramp(), 0.0006 * np.ones(3))
 
 #%% run simulation
 simulation.run_simulation()

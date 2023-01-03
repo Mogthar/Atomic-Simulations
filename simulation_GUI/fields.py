@@ -137,18 +137,20 @@ class DipoleField(Field):
     
     def calculate_force(self, positions, time, cloud):
         total_force = np.zeros(positions.shape)
+        alpha = cloud.intensity_prefactor
         # TODO possibly parallelize
         for dipole_beam in self.dipole_beams:
-            total_force = total_force + cloud.intensity_prefactor * dipole_beam.calculate_intensity_gradient(positions, time)
+            total_force = total_force + alpha * dipole_beam.calculate_intensity_gradient(positions, time)
         return total_force
     
     # detuning is calculated as delta = w - w0 = w - E_high + E_low
     # delE_high = 0 so we just add the change in the low level (which is negative)
     def calculate_detuning(self, positions, momenta, time, cloud):
         detuning = np.zeros(len(positions))
+        prefactor = cloud.intensity_prefactor / scipy.constants.hbar
         # TODO possibly parallelize
         for dipole_beam in self.dipole_beams:
-            detuning = detuning + cloud.intensity_prefactor / scipy.constants.hbar * dipole_beam.calculate_beam_intensity(positions, time)
+            detuning = detuning + prefactor * dipole_beam.calculate_beam_intensity(positions, time)
         return detuning
     
     def calculate_scattering_momenta(self, positions, momenta, B_field_direction, local_detunings, time, delta_t, cloud):
@@ -195,12 +197,13 @@ class DipoleBeam():
         return np.matmul(R_x, R_z)
     
     def convert_global_vectors_to_local(self, vectors):
-        M_transform_inverse = np.transpose(self.get_transformation_matrix())
-        return np.transpose(np.matmul(M_transform_inverse, np.transpose(vectors)))
+        # should be R_transp * vectors in the shape 3,N which is the same as vectors in the shape N,3 times R (not transposed) 
+        return np.matmul(vectors, self.get_transformation_matrix())
     
     def convert_local_vectors_to_global(self, vectors):
-        M_transform = self.get_transformation_matrix()
-        return np.transpose(np.matmul(M_transform, np.transpose(vectors)))
+        M_transform_transp = np.transpose(self.get_transformation_matrix())
+        # inverse to the above
+        return np.matmul(vectors, M_transform_transp)
     
     ## decide whether the input should be time or waist?
     # TODO cache?
